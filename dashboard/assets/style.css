@@ -1,0 +1,159 @@
+/* 
+Exo-Detector Dashboard Custom Stylesheet
+Author: Manus AI
+Date: May 2025
+*/
+
+/* Main layout and typography */
+.main-header {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #1E3A8A;
+    margin-bottom: 1rem;
+}
+
+.sub-header {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #2563EB;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #1F2937;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Metric cards */
+.metric-card {
+    background-color: #F3F4F6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #1E3A8A;
+}
+
+.metric-label {
+    font-size: 1rem;
+    color: #4B5563;
+}
+
+/* Highlight elements */
+.highlight {
+    background-color: #DBEAFE;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.highlight-warning {
+    background-color: #FEF3C7;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.highlight-success {
+    background-color: #D1FAE5;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+/* Tables */
+.dataframe {
+    font-size: 0.9rem !important;
+}
+
+.dataframe th {
+    background-color: #F3F4F6;
+    font-weight: 600;
+    color: #1F2937;
+}
+
+.dataframe tr:nth-child(even) {
+    background-color: #F9FAFB;
+}
+
+.dataframe tr:hover {
+    background-color: #F3F4F6;
+}
+
+/* Charts */
+.js-plotly-plot {
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Form elements */
+.stRadio > div {
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    background-color: #F9FAFB;
+}
+
+.stSlider > div {
+    padding: 1rem 0;
+}
+
+/* Footer */
+.footer {
+    margin-top: 3rem;
+    text-align: center;
+    color: #6B7280;
+    font-size: 0.875rem;
+    padding: 1rem;
+    border-top: 1px solid #E5E7EB;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .main-header {
+        font-size: 2rem;
+    }
+    
+    .sub-header {
+        font-size: 1.25rem;
+    }
+    
+    .metric-value {
+        font-size: 1.5rem;
+    }
+}
+
+/* Accessibility improvements */
+a:focus, button:focus, [role="button"]:focus {
+    outline: 2px solid #3B82F6;
+    outline-offset: 2px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #F3F4F6;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #D1D5DB;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #9CA3AF;
+}

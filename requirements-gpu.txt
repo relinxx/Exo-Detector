@@ -1,0 +1,12 @@
+# Exo-Detector GPU-specific Requirements
+# Author: Manus AI
+# Date: May 2025
+
+# GPU-accelerated PyTorch
+--extra-index-url https://download.pytorch.org/whl/cu117
+torch==2.0.1+cu117
+torchvision==0.15.2+cu117
+
+# CUDA-enabled libraries
+cupy-cuda11x==12.0.0
+numba==0.57.0

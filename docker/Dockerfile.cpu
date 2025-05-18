@@ -1,0 +1,49 @@
+# Exo-Detector CPU Dockerfile
+# Author: Manus AI
+# Date: May 2025
+
+# Use Python slim image as base
+FROM python:3.11-slim-buster
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    wget \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user
+RUN groupadd -r exouser && useradd -r -g exouser exouser
+
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Copy project files
+COPY . .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/data/logs /app/data/candidates /app/data/vetting && \
+    chown -R exouser:exouser /app
+
+# Switch to non-root user
+USER exouser
+
+# Set up entry point
+ENTRYPOINT ["python"]
+
+# Default command (can be overridden)
+CMD ["src/run_phase1.py"]
