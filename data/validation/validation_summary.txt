@@ -1,0 +1,6 @@
+directories_exist: True
+catalogs_exist: True
+raw_light_curves_count: 6
+processed_light_curves_count: 0
+transit_windows_count: 0
+non_transit_windows_count: 0

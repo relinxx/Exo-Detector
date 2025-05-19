@@ -1,0 +1,12 @@
+autoencoder_training:
+  num_epochs: 50
+  final_loss: 0.022362612187862396
+svm_training:
+  nu: 0.1
+evaluation_metrics:
+  roc_auc: 0.0
+  average_precision: 0.28038767769499784
+  non_transit_mean_error: 0.024135546758770943
+  transit_mean_error: 0.024304216727614403
+  non_transit_mean_score: -0.006729075099126981
+  transit_mean_score: -0.006732153953696555

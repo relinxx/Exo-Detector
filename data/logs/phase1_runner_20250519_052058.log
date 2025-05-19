@@ -1,0 +1,59 @@
+2025-05-19 05:20:58,555 - __main__ - INFO - Starting Phase 1 pipeline
+2025-05-19 05:20:58,555 - __main__ - INFO - Running data ingestion
+2025-05-19 05:21:00,926 - data_ingestion - INFO - Initialized TESSDataIngestion with max_tic_id=100000, sectors=[1, 2, 3, 4, 5]
+2025-05-19 05:21:00,926 - data_ingestion - INFO - Starting data ingestion pipeline
+2025-05-19 05:21:00,926 - data_ingestion - INFO - Downloading exoplanet catalogs
+2025-05-19 05:21:01,957 - data_ingestion - INFO - Loaded existing confirmed planets catalog with 38449 entries
+2025-05-19 05:21:02,004 - data_ingestion - INFO - Loaded existing TOI catalog with 7643 entries
+2025-05-19 05:21:02,007 - data_ingestion - INFO - Querying TIC targets with ID < 100000
+2025-05-19 05:21:04,615 - astroquery - WARNING - InputWarning: Filter TIC_ID does not exist. This filter will be skipped.
+2025-05-19 05:31:54,840 - data_ingestion - ERROR - Error querying TIC targets: Timeout limit of 600 exceeded.
+2025-05-19 05:31:54,841 - data_ingestion - INFO - Downloading light curves for 0 targets
+2025-05-19 05:31:54,842 - data_ingestion - INFO - Downloaded 0 light curves
+2025-05-19 05:31:54,842 - data_ingestion - INFO - Creating transit parameters catalog
+2025-05-19 05:31:54,900 - data_ingestion - ERROR - Error extracting parameters from confirmed planets: invalid literal for int() with base 10: 'TIC 27916356'
+2025-05-19 05:31:54,900 - data_ingestion - ERROR - Error extracting parameters from TOIs: 'TIC ID'
+2025-05-19 05:31:54,903 - data_ingestion - INFO - Created transit parameters catalog with 0 entries
+2025-05-19 05:31:54,914 - data_ingestion - INFO - Data ingestion pipeline completed
+2025-05-19 05:31:54,914 - data_ingestion - INFO - Summary: {'num_targets_queried': 0, 'num_light_curves_downloaded': 0, 'sectors_downloaded': [1, 2, 3, 4, 5], 'confirmed_planets_catalog_size': 38449, 'toi_catalog_size': 7643}
+2025-05-19 05:31:54,936 - __main__ - INFO - Data ingestion completed: {'num_targets_queried': 0, 'num_light_curves_downloaded': 0, 'sectors_downloaded': [1, 2, 3, 4, 5], 'confirmed_planets_catalog_size': 38449, 'toi_catalog_size': 7643}
+2025-05-19 05:31:54,937 - __main__ - INFO - Running data preprocessing
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Initialized TESSDataPreprocessing with window_size_hours=5
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Starting preprocessing pipeline
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Preprocessing 0 light curves
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Preprocessed 0 light curves
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Cross-matching TIC IDs with exoplanet catalogs
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Found 0 unique TIC IDs in processed data
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Found transit parameters for 0 TIC IDs
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Extracting transit windows
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Extracted 0 transit windows and 0 non-transit windows
+2025-05-19 05:31:56,493 - data_preprocessing - WARNING - No window files found
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Preprocessing pipeline completed
+2025-05-19 05:31:56,493 - data_preprocessing - INFO - Summary: {'num_light_curves_preprocessed': 0, 'num_stars_with_transits': 0, 'num_transit_windows': 0, 'num_non_transit_windows': 0}
+2025-05-19 05:31:56,493 - __main__ - INFO - Data preprocessing completed: {'num_light_curves_preprocessed': 0, 'num_stars_with_transits': 0, 'num_transit_windows': 0, 'num_non_transit_windows': 0}
+2025-05-19 05:31:56,493 - __main__ - INFO - Running data validation
+2025-05-19 05:31:56,493 - data_validation - INFO - Initialized DataValidator with data_dir=../data
+2025-05-19 05:31:56,493 - data_validation - INFO - Starting validation process
+2025-05-19 05:31:56,493 - data_validation - INFO - Validating directory structure
+2025-05-19 05:31:56,493 - data_validation - INFO - Directory raw exists
+2025-05-19 05:31:56,493 - data_validation - INFO - Directory processed exists
+2025-05-19 05:31:56,493 - data_validation - INFO - Directory catalogs exists
+2025-05-19 05:31:56,493 - data_validation - INFO - Directory transit_windows exists
+2025-05-19 05:31:56,493 - data_validation - INFO - Directory non_transit_windows exists
+2025-05-19 05:31:56,493 - data_validation - INFO - Validating catalogs
+2025-05-19 05:31:57,975 - data_validation - INFO - Catalog confirmed_planets.csv exists with 38449 rows and 354 columns
+2025-05-19 05:31:58,052 - data_validation - INFO - Catalog toi_catalog.csv exists with 7643 rows and 91 columns
+2025-05-19 05:31:58,052 - data_validation - ERROR - Error validating catalog transit_parameters.csv: No columns to parse from file
+2025-05-19 05:31:58,059 - data_validation - INFO - Validating light curves
+2025-05-19 05:31:58,059 - data_validation - INFO - Found 0 raw light curves from 0 unique TIC IDs
+2025-05-19 05:31:58,059 - data_validation - INFO - Found 0 processed light curves from 0 unique TIC IDs
+2025-05-19 05:31:58,059 - data_validation - INFO - Validating transit windows
+2025-05-19 05:31:58,059 - data_validation - INFO - Found 0 transit windows and 0 non-transit windows
+2025-05-19 05:31:58,059 - data_validation - INFO - Plotting data distribution
+2025-05-19 05:31:58,528 - data_validation - INFO - Saved data distribution plots to ../data\validation
+2025-05-19 05:31:58,528 - data_validation - INFO - Plotting example light curves
+2025-05-19 05:31:58,528 - data_validation - WARNING - No processed light curve files found
+2025-05-19 05:31:58,532 - data_validation - INFO - Validation process completed
+2025-05-19 05:31:58,532 - data_validation - INFO - Summary: {'directories_exist': True, 'catalogs_exist': True, 'raw_light_curves_count': 0, 'processed_light_curves_count': 0, 'transit_windows_count': 0, 'non_transit_windows_count': 0}
+2025-05-19 05:31:58,532 - __main__ - INFO - Data validation completed
+2025-05-19 05:31:58,532 - __main__ - INFO - Phase 1 pipeline completed
