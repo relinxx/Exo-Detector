@@ -1,119 +1,117 @@
+#!/usr/bin/env python3
+"""
+Exo-Detector: Phase 1 Runner Script
+
+This script runs the complete Phase 1 pipeline, including data ingestion,
+preprocessing, and validation.
+
+Author: Manus AI
+Date: May 2025
+"""
+
 import os
 import sys
-import logging
 import argparse
+import logging
+import json
 from datetime import datetime
 
 # Configure logging
-log_dir = "../data/logs"
-os.makedirs(log_dir, exist_ok=True)
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(log_dir, f"phase1_runner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-def run_phase1(limit=None, skip_ingestion=False, skip_preprocessing=False, skip_validation=False):
+def run_phase1(data_dir="data", sectors=[1, 2, 3, 4, 5], limit=None):
     """
     Run the complete Phase 1 pipeline.
     
     Parameters:
     -----------
-    limit : int, optional
-        Limit the number of targets to process (for testing)
-    skip_ingestion : bool
-        Skip the data ingestion step
-    skip_preprocessing : bool
-        Skip the data preprocessing step
-    skip_validation : bool
-        Skip the data validation step
+    data_dir : str
+        Directory to store data
+    sectors : list
+        List of TESS sectors to process
+    limit : int or None
+        Maximum number of targets to process
         
     Returns:
     --------
     dict
-        Dictionary containing summary statistics
+        Dictionary containing pipeline results
     """
-    logger.info("Starting Phase 1 pipeline")
-    
     # Import modules
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from data_ingestion import run_data_ingestion
+    from data_preprocessing import TESSDataPreprocessing
+    from data_validation import DataValidator
     
-    # Step 1: Data ingestion
-    if not skip_ingestion:
-        logger.info("Running data ingestion")
-        from data_ingestion import TESSDataIngestion
-        
-        ingestion = TESSDataIngestion()
-        ingestion_summary = ingestion.run_ingestion_pipeline(limit=limit)
-        logger.info(f"Data ingestion completed: {ingestion_summary}")
-    else:
-        logger.info("Skipping data ingestion")
+    # Create absolute path for data directory
+    data_dir = os.path.abspath(data_dir)
     
-    # Step 2: Data preprocessing
-    if not skip_preprocessing:
-        logger.info("Running data preprocessing")
-        from data_preprocessing import TESSDataPreprocessing
-        
-        preprocessing = TESSDataPreprocessing()
-        preprocessing_summary = preprocessing.run_preprocessing_pipeline(limit=limit)
-        logger.info(f"Data preprocessing completed: {preprocessing_summary}")
-    else:
-        logger.info("Skipping data preprocessing")
+    # Run data ingestion
+    logger.info("Running data ingestion")
     
-    # Step 3: Data validation
-    if not skip_validation:
-        logger.info("Running data validation")
-        from data_validation import DataValidator
-        
-        validator = DataValidator()
-        validation_results = validator.run_validation()
-        logger.info("Data validation completed")
-    else:
-        logger.info("Skipping data validation")
+    # Determine number of stars based on limit
+    num_stars = 20 if limit is None else min(limit, 20)
     
-    logger.info("Phase 1 pipeline completed")
+    ingestion_results = run_data_ingestion(
+        data_dir=data_dir, 
+        sectors=sectors, 
+        num_stars=num_stars, 
+        max_sectors_per_star=3
+    )
     
-    # Compile summary
-    summary = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "limit": limit,
-        "steps_executed": {
-            "ingestion": not skip_ingestion,
-            "preprocessing": not skip_preprocessing,
-            "validation": not skip_validation
-        }
+    logger.info(f"Data ingestion completed: {ingestion_results}")
+    
+    # Run data preprocessing
+    logger.info("Running data preprocessing")
+    preprocessing = TESSDataPreprocessing(data_dir=data_dir)
+    preprocessing_results = preprocessing.run_preprocessing_pipeline(limit=limit)
+    
+    logger.info(f"Data preprocessing completed: {preprocessing_results}")
+    
+    # Run data validation
+    logger.info("Running data validation")
+    validator = DataValidator(data_dir=data_dir)
+    validation_results = validator.run_validation()
+    
+    logger.info("Data validation completed")
+    
+    # Compile pipeline results
+    pipeline_results = {
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'limit': limit,
+        'steps_executed': {
+            'ingestion': True,
+            'preprocessing': True,
+            'validation': True
+        },
+        'ingestion': ingestion_results,
+        'preprocessing': preprocessing_results
     }
     
-    # Add step-specific summaries if available
-    if not skip_ingestion and 'ingestion_summary' in locals():
-        summary["ingestion"] = ingestion_summary
-    
-    if not skip_preprocessing and 'preprocessing_summary' in locals():
-        summary["preprocessing"] = preprocessing_summary
-    
-    return summary
+    return pipeline_results
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run the Exo-Detector Phase 1 pipeline")
-    parser.add_argument("--limit", type=int, default=None, help="Limit the number of targets to process (for testing)")
-    parser.add_argument("--skip-ingestion", action="store_true", help="Skip the data ingestion step")
-    parser.add_argument("--skip-preprocessing", action="store_true", help="Skip the data preprocessing step")
-    parser.add_argument("--skip-validation", action="store_true", help="Skip the data validation step")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Run Exo-Detector Phase 1 pipeline')
+    parser.add_argument('--data-dir', type=str, default='data', help='Directory to store data')
+    parser.add_argument('--sectors', type=int, nargs='+', default=[1, 2, 3, 4, 5], help='TESS sectors to process')
+    parser.add_argument('--limit', type=int, default=None, help='Maximum number of targets to process')
     
     args = parser.parse_args()
     
-    # Run the pipeline
+    # Run Phase 1 pipeline
+    logger.info("Starting Phase 1 pipeline")
     summary = run_phase1(
-        limit=args.limit,
-        skip_ingestion=args.skip_ingestion,
-        skip_preprocessing=args.skip_preprocessing,
-        skip_validation=args.skip_validation
+        data_dir=args.data_dir,
+        sectors=args.sectors,
+        limit=args.limit
     )
     
+    logger.info("Phase 1 pipeline completed")
     print(f"Phase 1 pipeline completed: {summary}")

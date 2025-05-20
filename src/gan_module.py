@@ -32,27 +32,32 @@ if torch.cuda.is_available():
 class TransitDataset(Dataset):
     """Dataset class for transit windows."""
     
-    def __init__(self, data_dir, window_size=200, normalize=True):
+    def __init__(self, data, window_size=200, normalize=True):
         """
         Initialize the transit dataset.
         
         Parameters:
         -----------
-        data_dir : str
-            Directory containing transit window files
+        data : str or list
+            Directory containing transit window files, or a list of file paths
         window_size : int
             Size of the window to use (will pad or truncate)
         normalize : bool
             Whether to normalize the flux values
         """
-        self.data_dir = data_dir
+        self.data = data
         self.window_size = window_size
         self.normalize = normalize
         
-        # Get all transit window files
-        self.transit_files = glob.glob(os.path.join(data_dir, "*.npz"))
-        
-        logger.info(f"Found {len(self.transit_files)} transit window files in {data_dir}")
+        # Accept either a directory or a list of files
+        if isinstance(data, str):
+            self.transit_files = glob.glob(os.path.join(data, "*.csv"))
+            logger.info(f"Found {len(self.transit_files)} transit window files in {data}")
+        elif isinstance(data, list):
+            self.transit_files = data
+            logger.info(f"TransitDataset initialized with {len(self.transit_files)} files (list)")
+        else:
+            raise ValueError("data must be a directory path or a list of file paths")
     
     def __len__(self):
         """Return the number of transit windows."""
@@ -72,9 +77,9 @@ class TransitDataset(Dataset):
         torch.Tensor
             Tensor containing the transit window
         """
-        # Load the transit window
-        data = np.load(self.transit_files[idx])
-        flux = data['flux']
+        # Load the transit window from CSV
+        df = pd.read_csv(self.transit_files[idx])
+        flux = df['flux'].values
         
         # Pad or truncate to window_size
         if len(flux) < self.window_size:
@@ -101,7 +106,7 @@ class TransitDataset(Dataset):
 class Generator(nn.Module):
     """Generator network for the GAN."""
     
-    def __init__(self, latent_dim=100, output_size=200):
+    def __init__(self, latent_dim=100):
         """
         Initialize the generator.
         
@@ -109,42 +114,29 @@ class Generator(nn.Module):
         -----------
         latent_dim : int
             Dimension of the latent space
-        output_size : int
-            Size of the output window
         """
         super(Generator, self).__init__()
         
         self.latent_dim = latent_dim
-        self.output_size = output_size
         
-        # Calculate initial size
-        self.initial_size = output_size // 16
-        
-        # Initial linear layer
-        self.linear = nn.Sequential(
-            nn.Linear(latent_dim, 128 * self.initial_size),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
-        
-        # Convolutional layers
-        self.conv_blocks = nn.Sequential(
-            # Block 1: (128, initial_size) -> (64, initial_size*2)
-            nn.ConvTranspose1d(128, 64, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(64),
-            nn.LeakyReLU(0.2, inplace=True),
+        # Define the generator architecture
+        self.model = nn.Sequential(
+            # Input layer
+            nn.Linear(latent_dim, 256),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm1d(256),
             
-            # Block 2: (64, initial_size*2) -> (32, initial_size*4)
-            nn.ConvTranspose1d(64, 32, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(32),
-            nn.LeakyReLU(0.2, inplace=True),
+            # Hidden layers
+            nn.Linear(256, 512),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm1d(512),
             
-            # Block 3: (32, initial_size*4) -> (16, initial_size*8)
-            nn.ConvTranspose1d(32, 16, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(16),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.Linear(512, 1024),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm1d(1024),
             
-            # Block 4: (16, initial_size*8) -> (1, initial_size*16 = output_size)
-            nn.ConvTranspose1d(16, 1, kernel_size=4, stride=2, padding=1),
+            # Output layer
+            nn.Linear(1024, 200),  # 200 points for transit window
             nn.Tanh()  # Output in range [-1, 1]
         )
     
@@ -160,18 +152,11 @@ class Generator(nn.Module):
         Returns:
         --------
         torch.Tensor
-            Generated transit window
+            Generated transit window with shape [batch_size, 1, sequence_length]
         """
-        # Linear layer
-        x = self.linear(z)
-        
-        # Reshape for convolutional layers
-        x = x.view(x.size(0), 128, self.initial_size)
-        
-        # Convolutional layers
-        x = self.conv_blocks(x)
-        
-        return x
+        x = self.model(z)
+        # Reshape to [batch_size, 1, sequence_length]
+        return x.unsqueeze(1)
 
 class Discriminator(nn.Module):
     """Discriminator network for the GAN."""
@@ -252,65 +237,63 @@ class Discriminator(nn.Module):
 class TransitGAN:
     """Class for training and using the GAN."""
     
-    def __init__(self, data_dir="../data", window_size=200, latent_dim=100, batch_size=32, lr=0.0002, beta1=0.5):
+    def __init__(self, data_dir="data", batch_size=32, latent_dim=100):
         """
-        Initialize the GAN.
+        Initialize the TransitGAN model.
         
         Parameters:
         -----------
         data_dir : str
             Directory containing the data
-        window_size : int
-            Size of the transit window
-        latent_dim : int
-            Dimension of the latent space
         batch_size : int
             Batch size for training
-        lr : float
-            Learning rate
-        beta1 : float
-            Beta1 parameter for Adam optimizer
+        latent_dim : int
+            Dimension of the latent space
         """
-        self.data_dir = data_dir
-        self.window_size = window_size
-        self.latent_dim = latent_dim
-        self.batch_size = batch_size
-        
-        # Define directories
-        self.transit_dir = os.path.join(data_dir, "transit_windows")
-        self.non_transit_dir = os.path.join(data_dir, "non_transit_windows")
-        self.synthetic_dir = os.path.join(data_dir, "synthetic_transits")
-        self.model_dir = os.path.join(data_dir, "models")
-        self.plot_dir = os.path.join(data_dir, "plots")
-        
-        # Create directories if they don't exist
-        for directory in [self.synthetic_dir, self.model_dir, self.plot_dir]:
-            os.makedirs(directory, exist_ok=True)
-        
-        # Set device
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
         
-        # Create dataset and dataloader
-        self.dataset = TransitDataset(self.transit_dir, window_size=window_size)
+        # Set up data directories
+        self.data_dir = os.path.abspath(data_dir)
+        self.transit_dir = os.path.join(self.data_dir, "transit_windows")
+        self.non_transit_dir = os.path.join(self.data_dir, "non_transit_windows")
+        self.latent_dim = latent_dim
+        self.batch_size = batch_size  # Store batch_size as instance variable
+        
+        # Find transit window files
+        self.transit_files = glob.glob(os.path.join(self.transit_dir, "*.csv"))
+        logger.info(f"Found {len(self.transit_files)} transit window files in {self.transit_dir}")
+        
+        if len(self.transit_files) == 0:
+            raise ValueError(f"No transit window files found in {self.transit_dir}")
+        
+        # Initialize dataset and dataloader
+        self.dataset = TransitDataset(self.transit_files)
         self.dataloader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True, num_workers=4)
         
-        # Create generator and discriminator
-        self.generator = Generator(latent_dim=latent_dim, output_size=window_size).to(self.device)
-        self.discriminator = Discriminator(input_size=window_size).to(self.device)
+        # Initialize models
+        self.generator = Generator(latent_dim=latent_dim).to(self.device)
+        self.discriminator = Discriminator().to(self.device)
         
-        # Initialize weights
-        self._init_weights(self.generator)
-        self._init_weights(self.discriminator)
+        # Initialize optimizers
+        self.g_optimizer = optim.Adam(self.generator.parameters(), lr=0.0001, betas=(0.5, 0.999))
+        self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=0.0001, betas=(0.5, 0.999))
         
-        # Create optimizers
-        self.optimizer_G = optim.Adam(self.generator.parameters(), lr=lr, betas=(beta1, 0.999))
-        self.optimizer_D = optim.Adam(self.discriminator.parameters(), lr=lr, betas=(beta1, 0.999))
-        
-        # Loss function
+        # Initialize loss function
         self.criterion = nn.BCELoss()
         
-        logger.info(f"Initialized TransitGAN with window_size={window_size}, latent_dim={latent_dim}, batch_size={batch_size}")
+        # Create output directories
+        self.output_dir = os.path.join(self.data_dir, "gan_output")
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Initialize training metrics
+        self.g_losses = []
+        self.d_losses = []
+        self.real_scores = []
+        self.fake_scores = []
+        
+        # Add label smoothing
+        self.label_smoothing = 0.1
     
     def _init_weights(self, model):
         """
@@ -369,77 +352,71 @@ class TransitGAN:
                 # Format real batch
                 real_transits = real_transits.to(self.device)
                 batch_size = real_transits.size(0)
-                label = torch.full((batch_size, 1), 1, dtype=torch.float, device=self.device)
+                
+                # Add label smoothing for real samples
+                label_real = torch.full((batch_size, 1), 1 - self.label_smoothing, dtype=torch.float, device=self.device)
                 
                 # Forward pass real batch through D
-                output = self.discriminator(real_transits)
-                
-                # Calculate loss on real batch
-                errD_real = self.criterion(output, label)
-                
-                # Calculate gradients for D in backward pass
+                output_real = self.discriminator(real_transits)
+                errD_real = self.criterion(output_real, label_real)
                 errD_real.backward()
-                D_x = output.mean().item()
+                D_x = output_real.mean().item()
                 
-                # Generate batch of latent vectors
+                # Generate fake batch
                 noise = torch.randn(batch_size, self.latent_dim, device=self.device)
-                
-                # Generate fake transit batch with G
                 fake = self.generator(noise)
-                label.fill_(0)
+                label_fake = torch.full((batch_size, 1), self.label_smoothing, dtype=torch.float, device=self.device)
                 
-                # Classify fake batch with D
-                output = self.discriminator(fake.detach())
-                
-                # Calculate D's loss on the fake batch
-                errD_fake = self.criterion(output, label)
-                
-                # Calculate the gradients for this batch
+                # Classify fake batch
+                output_fake = self.discriminator(fake.detach())
+                errD_fake = self.criterion(output_fake, label_fake)
                 errD_fake.backward()
-                D_G_z1 = output.mean().item()
-                
-                # Add the gradients from the real and fake batches
-                errD = errD_real + errD_fake
+                D_G_z1 = output_fake.mean().item()
                 
                 # Update D
-                self.optimizer_D.step()
+                errD = errD_real + errD_fake
+                self.d_optimizer.step()
                 
                 ############################
                 # Update Generator
                 ############################
                 self.generator.zero_grad()
-                label.fill_(1)  # Fake labels are real for generator cost
+                label_fake.fill_(1 - self.label_smoothing)  # Fake labels are real for generator cost
                 
-                # Since we just updated D, perform another forward pass of fake batch through D
-                output = self.discriminator(fake)
-                
-                # Calculate G's loss based on this output
-                errG = self.criterion(output, label)
-                
-                # Calculate gradients for G
+                # Forward pass of fake batch through D
+                output_fake = self.discriminator(fake)
+                errG = self.criterion(output_fake, label_fake)
                 errG.backward()
-                D_G_z2 = output.mean().item()
+                D_G_z2 = output_fake.mean().item()
                 
                 # Update G
-                self.optimizer_G.step()
-                
-                # Save losses for plotting later
-                G_losses.append(errG.item())
-                D_losses.append(errD.item())
+                self.g_optimizer.step()
                 
                 # Calculate discriminator accuracy
-                pred_real = (output > 0.5).float()
-                accuracy = (pred_real == label).float().mean().item()
-                D_accuracies.append(accuracy)
+                pred_real = (output_real > 0.5).float()
+                pred_fake = (output_fake > 0.5).float()
+                accuracy = (pred_real.mean() + (1 - pred_fake.mean())) / 2
+                
+                # Save losses and accuracy
+                G_losses.append(errG.item())
+                D_losses.append(errD.item())
+                D_accuracies.append(accuracy.item())
+                
+                # Log progress
+                if i % 10 == 0:
+                    logger.info(f"[{epoch+1}/{num_epochs}][{i}/{len(self.dataloader)}] "
+                              f"Loss_D: {errD.item():.4f} Loss_G: {errG.item():.4f} "
+                              f"D(x): {D_x:.4f} D(G(z)): {D_G_z1:.4f}/{D_G_z2:.4f} "
+                              f"Acc: {accuracy.item():.4f}")
             
-            # Output training stats
-            logger.info(f"[{epoch+1}/{num_epochs}] Loss_D: {errD.item():.4f} Loss_G: {errG.item():.4f} D(x): {D_x:.4f} D(G(z)): {D_G_z1:.4f}/{D_G_z2:.4f} Acc: {accuracy:.4f}")
-            
-            # Save models and generate samples at specified intervals
+            # Save models and generate samples
             if (epoch + 1) % save_interval == 0 or (epoch + 1) == num_epochs:
                 self.save_models(epoch + 1)
                 self.generate_samples(fixed_noise, epoch + 1)
                 self.plot_losses(G_losses, D_losses, D_accuracies, epoch + 1)
+                
+                # Add validation metrics
+                self.validate_synthetic_samples(num_samples=10)
         
         logger.info("GAN training completed")
         
@@ -459,8 +436,8 @@ class TransitGAN:
         epoch : int
             Current epoch
         """
-        torch.save(self.generator.state_dict(), os.path.join(self.model_dir, f"generator_epoch_{epoch}.pth"))
-        torch.save(self.discriminator.state_dict(), os.path.join(self.model_dir, f"discriminator_epoch_{epoch}.pth"))
+        torch.save(self.generator.state_dict(), os.path.join(self.output_dir, f"generator_epoch_{epoch}.pth"))
+        torch.save(self.discriminator.state_dict(), os.path.join(self.output_dir, f"discriminator_epoch_{epoch}.pth"))
         logger.info(f"Saved models at epoch {epoch}")
     
     def load_models(self, epoch):
@@ -477,8 +454,8 @@ class TransitGAN:
         bool
             Whether the models were loaded successfully
         """
-        generator_path = os.path.join(self.model_dir, f"generator_epoch_{epoch}.pth")
-        discriminator_path = os.path.join(self.model_dir, f"discriminator_epoch_{epoch}.pth")
+        generator_path = os.path.join(self.output_dir, f"generator_epoch_{epoch}.pth")
+        discriminator_path = os.path.join(self.output_dir, f"discriminator_epoch_{epoch}.pth")
         
         if os.path.exists(generator_path) and os.path.exists(discriminator_path):
             self.generator.load_state_dict(torch.load(generator_path, map_location=self.device))
@@ -531,7 +508,7 @@ class TransitGAN:
             
             # Save plot if epoch is provided
             if epoch is not None:
-                plt.savefig(os.path.join(self.plot_dir, f"samples_epoch_{epoch}.png"))
+                plt.savefig(os.path.join(self.output_dir, f"samples_epoch_{epoch}.png"))
             
             plt.close()
         
@@ -576,7 +553,7 @@ class TransitGAN:
         plt.grid(True)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plot_dir, f"losses_epoch_{epoch}.png"))
+        plt.savefig(os.path.join(self.output_dir, f"losses_epoch_{epoch}.png"))
         plt.close()
     
     def generate_synthetic_dataset(self, num_samples=1000, epoch=None):
@@ -600,7 +577,7 @@ class TransitGAN:
         # Load the latest model if epoch is not specified
         if epoch is None:
             # Find the latest epoch
-            generator_files = glob.glob(os.path.join(self.model_dir, "generator_epoch_*.pth"))
+            generator_files = glob.glob(os.path.join(self.output_dir, "generator_epoch_*.pth"))
             if len(generator_files) == 0:
                 logger.error("No generator models found")
                 return []
@@ -633,7 +610,7 @@ class TransitGAN:
                     sample = fake[j, 0].cpu().numpy()
                     
                     # Save to file
-                    file_path = os.path.join(self.synthetic_dir, f"synthetic_transit_{i+j+1}.npz")
+                    file_path = os.path.join(self.output_dir, f"synthetic_transit_{i+j+1}.npz")
                     np.savez(
                         file_path,
                         flux=sample,
@@ -650,126 +627,82 @@ class TransitGAN:
         
         return synthetic_files
     
-    def validate_synthetic_samples(self, num_samples=100):
-        """
-        Validate synthetic samples against real samples.
-        
-        Parameters:
-        -----------
-        num_samples : int
-            Number of samples to validate
-            
-        Returns:
-        --------
-        dict
-            Dictionary containing validation results
-        """
+    def validate_synthetic_samples(self, num_samples=10):
+        """Validate synthetic samples with basic metrics."""
         logger.info(f"Validating {num_samples} synthetic samples")
         
-        # Get real transit files
-        real_files = glob.glob(os.path.join(self.transit_dir, "*.npz"))
-        if len(real_files) == 0:
-            logger.error("No real transit files found")
-            return {}
+        # Generate new samples
+        self.generator.eval()
+        with torch.no_grad():
+            noise = torch.randn(num_samples, self.latent_dim, device=self.device)
+            synthetic_samples = self.generator(noise)
         
-        # Get synthetic transit files
-        synthetic_files = glob.glob(os.path.join(self.synthetic_dir, "*.npz"))
-        if len(synthetic_files) == 0:
-            logger.error("No synthetic transit files found")
-            return {}
+        # Calculate basic statistics
+        samples_np = synthetic_samples.cpu().numpy()
         
-        # Sample files
-        real_samples = np.random.choice(real_files, min(num_samples, len(real_files)), replace=False)
-        synthetic_samples = np.random.choice(synthetic_files, min(num_samples, len(synthetic_files)), replace=False)
+        # Calculate mean and std of synthetic samples
+        mean_flux = np.mean(samples_np, axis=0)
+        std_flux = np.std(samples_np, axis=0)
         
-        # Load samples
-        real_data = []
-        for file in real_samples:
-            data = np.load(file)
-            real_data.append(data['flux'])
+        # Calculate depth of transit (minimum value)
+        transit_depths = np.min(samples_np, axis=1)
+        avg_depth = np.mean(transit_depths)
         
-        synthetic_data = []
-        for file in synthetic_samples:
-            data = np.load(file)
-            synthetic_data.append(data['flux'])
+        # Plot validation results
+        plt.figure(figsize=(15, 10))
         
-        # Convert to numpy arrays
-        real_data = np.array(real_data)
-        synthetic_data = np.array(synthetic_data)
-        
-        # Calculate statistics
-        real_mean = np.mean(real_data, axis=0)
-        real_std = np.std(real_data, axis=0)
-        synthetic_mean = np.mean(synthetic_data, axis=0)
-        synthetic_std = np.std(synthetic_data, axis=0)
-        
-        # Calculate metrics
-        mse = np.mean((real_mean - synthetic_mean) ** 2)
-        correlation = np.corrcoef(real_mean, synthetic_mean)[0, 1]
-        
-        # Plot comparison
-        plt.figure(figsize=(12, 8))
-        
-        # Plot means
-        plt.subplot(2, 1, 1)
-        plt.plot(real_mean, label='Real')
-        plt.plot(synthetic_mean, label='Synthetic')
+        # Plot mean transit shape
+        plt.subplot(2, 2, 1)
+        plt.plot(mean_flux[0])
+        plt.fill_between(range(len(mean_flux[0])), 
+                        mean_flux[0] - std_flux[0],
+                        mean_flux[0] + std_flux[0],
+                        alpha=0.3)
+        plt.title('Mean Synthetic Transit Shape')
         plt.xlabel('Time')
         plt.ylabel('Flux')
-        plt.title('Mean Transit Shape')
+        plt.grid(True)
+        
+        # Plot sample transits
+        plt.subplot(2, 2, 2)
+        for i in range(min(5, num_samples)):
+            plt.plot(samples_np[i, 0], alpha=0.5, label=f'Sample {i+1}')
+        plt.title('Sample Synthetic Transits')
+        plt.xlabel('Time')
+        plt.ylabel('Flux')
         plt.legend()
         plt.grid(True)
         
-        # Plot standard deviations
-        plt.subplot(2, 1, 2)
-        plt.plot(real_std, label='Real')
-        plt.plot(synthetic_std, label='Synthetic')
+        # Plot transit depth distribution
+        plt.subplot(2, 2, 3)
+        plt.hist(transit_depths, bins=10)
+        plt.title('Transit Depth Distribution')
+        plt.xlabel('Transit Depth')
+        plt.ylabel('Count')
+        plt.grid(True)
+        
+        # Plot standard deviation
+        plt.subplot(2, 2, 4)
+        plt.plot(std_flux[0])
+        plt.title('Standard Deviation of Synthetic Transits')
         plt.xlabel('Time')
         plt.ylabel('Standard Deviation')
-        plt.title('Transit Shape Variability')
-        plt.legend()
         plt.grid(True)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plot_dir, "synthetic_validation.png"))
+        plt.savefig(os.path.join(self.output_dir, 'validation_metrics.png'))
         plt.close()
         
-        # Plot sample comparison
-        plt.figure(figsize=(12, 8))
-        
-        # Plot real samples
-        plt.subplot(2, 1, 1)
-        for i in range(min(10, len(real_data))):
-            plt.plot(real_data[i])
-        plt.xlabel('Time')
-        plt.ylabel('Flux')
-        plt.title('Real Transit Samples')
-        plt.grid(True)
-        
-        # Plot synthetic samples
-        plt.subplot(2, 1, 2)
-        for i in range(min(10, len(synthetic_data))):
-            plt.plot(synthetic_data[i])
-        plt.xlabel('Time')
-        plt.ylabel('Flux')
-        plt.title('Synthetic Transit Samples')
-        plt.grid(True)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plot_dir, "sample_comparison.png"))
-        plt.close()
-        
-        # Compile validation results
-        validation_results = {
-            "num_real_samples": len(real_data),
-            "num_synthetic_samples": len(synthetic_data),
-            "mse": mse,
-            "correlation": correlation
+        # Log validation metrics
+        validation_metrics = {
+            'mean_transit_depth': float(avg_depth),
+            'std_transit_depth': float(np.std(transit_depths)),
+            'mean_std_flux': float(np.mean(std_flux)),
+            'max_std_flux': float(np.max(std_flux))
         }
         
-        logger.info(f"Validation results: {validation_results}")
-        
-        return validation_results
+        logger.info(f"Validation metrics: {validation_metrics}")
+        return validation_metrics
     
     def run_gan_pipeline(self, num_epochs=100, num_synthetic_samples=1000):
         """

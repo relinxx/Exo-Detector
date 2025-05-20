@@ -51,27 +51,54 @@ class LightCurveDataset(Dataset):
         label : int or None
             If specified, only load windows with this label (0 for non-transit, 1 for transit)
         """
-        self.data_dir = data_dir
+        self.data_dir = os.path.abspath(data_dir)
         self.window_size = window_size
         self.normalize = normalize
         self.label = label
         
+        # Hard-coded paths
+        if 'non_transit' in data_dir:
+            self.data_dir = os.path.abspath('data/non_transit_windows')
+        elif 'transit' in data_dir:
+            self.data_dir = os.path.abspath('data/transit_windows')
+        
+        # Check if directory exists
+        if not os.path.exists(self.data_dir):
+            raise ValueError(f"Directory {self.data_dir} does not exist.")
+        
         # Get all window files
-        self.window_files = glob.glob(os.path.join(data_dir, "*.npz"))
+        self.window_files = glob.glob(os.path.join(self.data_dir, "*.csv"))
+        
+        # Debug: Print the full paths of the .csv files
+        print(f"Looking for .csv files in: {self.data_dir}")
+        print(f"Found {len(self.window_files)} .csv files: {self.window_files}")
+        
+        # Debug: Print the first few .csv files
+        for file in self.window_files[:3]:
+            try:
+                data = pd.read_csv(file)
+                print(f"Contents of {file}:")
+                print(data.head())
+            except Exception as e:
+                logger.warning(f"Error loading {file}: {str(e)}")
         
         # Filter by label if specified
         if label is not None:
             filtered_files = []
             for file in self.window_files:
-                try:
-                    data = np.load(file)
-                    if 'label' in data and data['label'] == label:
-                        filtered_files.append(file)
-                except Exception as e:
-                    logger.warning(f"Error loading {file}: {str(e)}")
+                # Infer label from parent directory name precisely
+                parent_dir = os.path.basename(os.path.dirname(file))
+                if parent_dir == 'transit_windows':
+                    inferred_label = 1
+                elif parent_dir == 'non_transit_windows':
+                    inferred_label = 0
+                else:
+                    inferred_label = -1  # Unknown, skip
+                if inferred_label == label:
+                    filtered_files.append(file)
             self.window_files = filtered_files
         
-        logger.info(f"Found {len(self.window_files)} window files in {data_dir}" + 
+        logger.info(f"Found {len(self.window_files)} window files in {self.data_dir}" + 
                    (f" with label {label}" if label is not None else ""))
     
     def __len__(self):
@@ -79,47 +106,30 @@ class LightCurveDataset(Dataset):
         return len(self.window_files)
     
     def __getitem__(self, idx):
-        """
-        Get a light curve window.
+        """Return a window and its label."""
+        file_path = self.window_files[idx]
+        data = pd.read_csv(file_path)
         
-        Parameters:
-        -----------
-        idx : int
-            Index of the window
-            
-        Returns:
-        --------
-        tuple
-            (flux_tensor, label)
-        """
-        # Load the window
-        data = np.load(self.window_files[idx])
-        flux = data['flux']
-        
-        # Get label (1 for transit, 0 for non-transit)
-        label = data.get('label', 0)
+        # Extract flux values
+        flux = data['flux'].values
         
         # Pad or truncate to window_size
         if len(flux) < self.window_size:
-            # Pad with median value
-            pad_value = np.median(flux)
-            pad_width = self.window_size - len(flux)
-            pad_left = pad_width // 2
-            pad_right = pad_width - pad_left
-            flux = np.pad(flux, (pad_left, pad_right), mode='constant', constant_values=pad_value)
-        elif len(flux) > self.window_size:
-            # Truncate from center
-            start = (len(flux) - self.window_size) // 2
-            flux = flux[start:start + self.window_size]
+            flux = np.pad(flux, (0, self.window_size - len(flux)), 'constant')
+        else:
+            flux = flux[:self.window_size]
         
-        # Normalize if requested
+        # Normalize if required
         if self.normalize:
-            flux = (flux - np.median(flux)) / np.std(flux)
+            flux = (flux - np.mean(flux)) / np.std(flux)
         
         # Convert to tensor
-        flux_tensor = torch.tensor(flux, dtype=torch.float32).unsqueeze(0)  # Add channel dimension
+        flux = torch.FloatTensor(flux).unsqueeze(0)  # Add channel dimension
         
-        return flux_tensor, label
+        # Infer label from directory name
+        label = 1 if 'transit' in os.path.basename(os.path.dirname(file_path)) else 0
+        
+        return flux, label
 
 class Autoencoder(nn.Module):
     """1D-Convolutional Autoencoder for anomaly detection."""

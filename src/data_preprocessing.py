@@ -1,591 +1,445 @@
+#!/usr/bin/env python3
+"""
+Exo-Detector: Data Preprocessing Module
+
+This module handles the preprocessing of TESS light curves, including detrending,
+normalization, and extraction of transit windows.
+
+Author: Manus AI
+Date: May 2025
+"""
+
 import os
+import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from astropy.io import fits
-from astropy.table import Table
-import lightkurve as lk
-from scipy.signal import savgol_filter
+from scipy import signal
+import glob
 from tqdm import tqdm
 import logging
-import glob
-import warnings
+import json
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("../data/preprocessing.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Suppress lightkurve warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="lightkurve")
-
 class TESSDataPreprocessing:
-    """Class for handling TESS data preprocessing operations."""
+    """Class for preprocessing TESS light curves."""
     
-    def __init__(self, data_dir="../data", window_size_hours=5):
+    def __init__(self, data_dir="data", window_size_hours=5):
         """
-        Initialize the data preprocessing module.
+        Initialize the data preprocessing class.
         
         Parameters:
         -----------
         data_dir : str
-            Directory containing the downloaded data
+            Directory containing data
         window_size_hours : float
-            Size of the window to extract around transits (in hours)
+            Size of transit windows in hours
         """
-        self.data_dir = data_dir
+        # Convert to absolute path
+        self.data_dir = os.path.abspath(data_dir)
         self.window_size_hours = window_size_hours
         
         # Define directories
-        self.raw_dir = os.path.join(data_dir, "raw")
-        self.processed_dir = os.path.join(data_dir, "processed")
-        self.catalog_dir = os.path.join(data_dir, "catalogs")
-        self.transit_dir = os.path.join(data_dir, "transit_windows")
-        self.non_transit_dir = os.path.join(data_dir, "non_transit_windows")
+        self.raw_dir = os.path.join(self.data_dir, "raw")
+        self.processed_dir = os.path.join(self.data_dir, "processed")
+        self.catalog_dir = os.path.join(self.data_dir, "catalogs")
+        self.transit_windows_dir = os.path.join(self.data_dir, "transit_windows")
+        self.non_transit_windows_dir = os.path.join(self.data_dir, "non_transit_windows")
         
-        # Create directories if they don't exist
-        for directory in [self.processed_dir, self.transit_dir, self.non_transit_dir]:
-            os.makedirs(directory, exist_ok=True)
-        
-        # Load catalogs if they exist
-        self.confirmed_planets = self._load_catalog("confirmed_planets.csv")
-        self.toi_catalog = self._load_catalog("toi_catalog.csv")
+        # Create directories
+        os.makedirs(self.processed_dir, exist_ok=True)
+        os.makedirs(self.transit_windows_dir, exist_ok=True)
+        os.makedirs(self.non_transit_windows_dir, exist_ok=True)
         
         logger.info(f"Initialized TESSDataPreprocessing with window_size_hours={window_size_hours}")
+        logger.info(f"Using data directory: {self.data_dir}")
     
-    def _load_catalog(self, filename):
+    def load_csv_light_curve(self, filepath):
         """
-        Load a catalog from file.
+        Load a CSV light curve file.
         
         Parameters:
         -----------
-        filename : str
-            Name of the catalog file
+        filepath : str
+            Path to CSV file
             
         Returns:
         --------
-        pandas.DataFrame or None
-            Loaded catalog or None if file doesn't exist
+        tuple
+            (time_array, flux_array, flux_err_array)
         """
-        filepath = os.path.join(self.catalog_dir, filename)
-        if os.path.exists(filepath):
-            return pd.read_csv(filepath)
-        else:
-            logger.warning(f"Catalog file not found: {filepath}")
-            return None
+        try:
+            # Read CSV file, skipping comment lines
+            df = pd.read_csv(filepath, comment='#')
+            
+            # Extract data
+            time = df['time'].values
+            flux = df['flux'].values
+            
+            # Check if flux_err column exists
+            if 'flux_err' in df.columns:
+                flux_err = df['flux_err'].values
+            else:
+                # If no error column, estimate errors as sqrt(flux)
+                flux_err = np.sqrt(np.abs(flux)) / 100
+            
+            return time, flux, flux_err
+        
+        except Exception as e:
+            logger.error(f"Error reading CSV file {filepath}: {str(e)}")
+            raise
     
-    def detrend_light_curve(self, lc, window_length=101, polyorder=2):
+    def detrend_light_curve(self, time, flux, flux_err, window_length=101):
         """
-        Detrend a light curve using Savitzky-Golay filter.
+        Detrend a light curve using a Savitzky-Golay filter.
         
         Parameters:
         -----------
-        lc : lightkurve.LightCurve
-            Light curve to detrend
+        time : numpy.ndarray
+            Array of time values
+        flux : numpy.ndarray
+            Array of flux values
+        flux_err : numpy.ndarray
+            Array of flux error values
         window_length : int
             Window length for Savitzky-Golay filter
-        polyorder : int
-            Polynomial order for Savitzky-Golay filter
             
         Returns:
         --------
-        lightkurve.LightCurve
-            Detrended light curve
+        tuple
+            (time, detrended_flux, flux_err)
         """
-        # Make sure window_length is odd
-        if window_length % 2 == 0:
-            window_length += 1
+        # Handle NaN values
+        mask = np.isfinite(flux)
+        if not np.any(mask):
+            raise ValueError("All flux values are NaN")
         
-        # Remove NaNs
-        mask = ~np.isnan(lc.flux.value)
-        time = lc.time.value[mask]
-        flux = lc.flux.value[mask]
+        # Apply Savitzky-Golay filter to the valid data
+        trend = np.ones_like(flux) * np.nan
+        if np.sum(mask) > window_length:
+            trend[mask] = signal.savgol_filter(flux[mask], window_length, 2)
+        else:
+            # If too few points, use a simple median
+            trend[mask] = np.median(flux[mask])
         
-        # Apply Savitzky-Golay filter
-        try:
-            trend = savgol_filter(flux, window_length, polyorder)
-            detrended_flux = flux / trend
-            
-            # Create a new light curve with detrended flux
-            detrended_lc = lk.LightCurve(time=time, flux=detrended_flux)
-            return detrended_lc
-        except Exception as e:
-            logger.error(f"Error detrending light curve: {str(e)}")
-            return None
+        # Detrend
+        detrended_flux = flux / trend
+        
+        # Adjust errors
+        detrended_flux_err = flux_err / trend
+        
+        return time, detrended_flux, detrended_flux_err
     
-    def normalize_light_curve(self, lc):
+    def normalize_light_curve(self, time, flux, flux_err):
         """
         Normalize a light curve to have a median of 1.0.
         
         Parameters:
         -----------
-        lc : lightkurve.LightCurve
-            Light curve to normalize
-            
-        Returns:
-        --------
-        lightkurve.LightCurve
-            Normalized light curve
-        """
-        if lc is None:
-            return None
-        
-        try:
-            # Remove NaNs
-            mask = ~np.isnan(lc.flux.value)
-            time = lc.time.value[mask]
-            flux = lc.flux.value[mask]
-            
-            # Normalize flux to have median of 1.0
-            median_flux = np.median(flux)
-            normalized_flux = flux / median_flux
-            
-            # Create a new light curve with normalized flux
-            normalized_lc = lk.LightCurve(time=time, flux=normalized_flux)
-            return normalized_lc
-        except Exception as e:
-            logger.error(f"Error normalizing light curve: {str(e)}")
-            return None
-    
-    def preprocess_light_curve(self, lc_file):
-        """
-        Preprocess a light curve file.
-        
-        Parameters:
-        -----------
-        lc_file : str
-            Path to the light curve file
+        time : numpy.ndarray
+            Array of time values
+        flux : numpy.ndarray
+            Array of flux values
+        flux_err : numpy.ndarray
+            Array of flux error values
             
         Returns:
         --------
         tuple
-            (tic_id, sector, preprocessed_lc) - TIC ID, sector, and preprocessed light curve
+            (time, normalized_flux, normalized_flux_err)
+        """
+        # Handle NaN values
+        mask = np.isfinite(flux)
+        if not np.any(mask):
+            raise ValueError("All flux values are NaN")
+        
+        # Calculate median
+        median = np.median(flux[mask])
+        
+        # Normalize
+        normalized_flux = flux / median
+        normalized_flux_err = flux_err / median
+        
+        return time, normalized_flux, normalized_flux_err
+    
+    def preprocess_light_curve(self, filepath):
+        """
+        Preprocess a light curve: load, detrend, and normalize.
+        
+        Parameters:
+        -----------
+        filepath : str
+            Path to CSV file
+            
+        Returns:
+        --------
+        tuple
+            (time, flux, flux_err, tic_id, sector)
         """
         try:
             # Extract TIC ID and sector from filename
-            tic_id = int(os.path.basename(os.path.dirname(lc_file)).split('_')[1])
-            sector = int(os.path.basename(lc_file).split('_')[1])
+            filename = os.path.basename(filepath)
+            dirname = os.path.dirname(filepath)
+            tic_dirname = os.path.basename(dirname)
             
-            # Load the light curve
-            lc = lk.read(lc_file)
+            if "TIC_" in tic_dirname:
+                tic_id = int(tic_dirname.split("_")[1])
+            else:
+                tic_id = 0
             
-            # Remove flagged data points
-            if hasattr(lc, 'quality'):
-                lc = lc[lc.quality == 0]
+            if "sector_" in filename:
+                sector = int(filename.split("_")[1].split(".")[0])
+            else:
+                sector = 0
             
-            # Detrend the light curve
-            detrended_lc = self.detrend_light_curve(lc)
+            # Load light curve
+            time, flux, flux_err = self.load_csv_light_curve(filepath)
             
-            # Normalize the light curve
-            normalized_lc = self.normalize_light_curve(detrended_lc)
+            # Detrend
+            time, flux, flux_err = self.detrend_light_curve(time, flux, flux_err)
             
-            if normalized_lc is None:
-                logger.warning(f"Failed to preprocess light curve: {lc_file}")
-                return tic_id, sector, None
+            # Normalize
+            time, flux, flux_err = self.normalize_light_curve(time, flux, flux_err)
             
-            # Save the preprocessed light curve
-            output_dir = os.path.join(self.processed_dir, f"TIC_{tic_id}")
-            os.makedirs(output_dir, exist_ok=True)
-            output_file = os.path.join(output_dir, f"sector_{sector}_lc_processed.fits")
-            normalized_lc.to_fits(output_file, overwrite=True)
-            
-            logger.info(f"Preprocessed light curve for TIC {tic_id}, sector {sector}")
-            return tic_id, sector, normalized_lc
+            return time, flux, flux_err, tic_id, sector
         
         except Exception as e:
-            logger.error(f"Error preprocessing light curve {lc_file}: {str(e)}")
-            return None, None, None
+            logger.error(f"Error preprocessing light curve {filepath}: {str(e)}")
+            raise
     
-    def preprocess_all_light_curves(self, limit=None):
+    def save_processed_light_curve(self, time, flux, flux_err, tic_id, sector):
         """
-        Preprocess all downloaded light curves.
+        Save a processed light curve to a CSV file.
         
         Parameters:
         -----------
-        limit : int, optional
-            Limit the number of light curves to preprocess (for testing)
+        time : numpy.ndarray
+            Array of time values
+        flux : numpy.ndarray
+            Array of flux values
+        flux_err : numpy.ndarray
+            Array of flux error values
+        tic_id : int
+            TIC ID
+        sector : int
+            TESS sector number
             
         Returns:
         --------
-        list
-            List of preprocessed light curve files
+        str
+            Path to saved CSV file
         """
-        # Get all light curve files
-        lc_files = []
-        for root, dirs, files in os.walk(self.raw_dir):
-            for file in files:
-                if file.endswith("_lc.fits"):
-                    lc_files.append(os.path.join(root, file))
+        # Create directory for this target
+        target_dir = os.path.join(self.processed_dir, f"TIC_{tic_id}")
+        os.makedirs(target_dir, exist_ok=True)
         
-        if limit is not None:
-            lc_files = lc_files[:limit]
+        # Define output file path
+        csv_file = os.path.join(target_dir, f"sector_{sector}_lc.csv")
         
-        logger.info(f"Preprocessing {len(lc_files)} light curves")
+        # Create DataFrame
+        df = pd.DataFrame({
+            'time': time,
+            'flux': flux,
+            'flux_err': flux_err
+        })
         
-        # Preprocess each light curve
-        preprocessed_files = []
-        for lc_file in tqdm(lc_files, desc="Preprocessing light curves"):
-            tic_id, sector, _ = self.preprocess_light_curve(lc_file)
-            
-            if tic_id is not None and sector is not None:
-                output_file = os.path.join(self.processed_dir, f"TIC_{tic_id}", f"sector_{sector}_lc_processed.fits")
-                preprocessed_files.append(output_file)
+        # Save to CSV
+        df.to_csv(csv_file, index=False)
         
-        logger.info(f"Preprocessed {len(preprocessed_files)} light curves")
-        
-        # Save the list of preprocessed files
-        with open(os.path.join(self.catalog_dir, 'preprocessed_files.txt'), 'w') as f:
-            for file_path in preprocessed_files:
-                f.write(f"{file_path}\n")
-        
-        return preprocessed_files
+        return csv_file
     
-    def cross_match_with_catalogs(self):
+    def load_transit_parameters(self, filepath=None):
         """
-        Cross-match TIC IDs with exoplanet catalogs.
-        
-        Returns:
-        --------
-        dict
-            Dictionary mapping TIC IDs to transit parameters
-        """
-        if self.confirmed_planets is None or self.toi_catalog is None:
-            logger.error("Exoplanet catalogs not loaded")
-            return {}
-        
-        logger.info("Cross-matching TIC IDs with exoplanet catalogs")
-        
-        # Get all TIC IDs from processed light curves
-        tic_ids = set()
-        for root, dirs, files in os.walk(self.processed_dir):
-            for dir_name in dirs:
-                if dir_name.startswith("TIC_"):
-                    try:
-                        tic_id = int(dir_name.split("_")[1])
-                        tic_ids.add(tic_id)
-                    except (IndexError, ValueError):
-                        pass
-        
-        logger.info(f"Found {len(tic_ids)} unique TIC IDs in processed data")
-        
-        # Cross-match with TOI catalog
-        transit_params = {}
-        
-        # Check if 'TIC ID' column exists in TOI catalog
-        if 'TIC ID' in self.toi_catalog.columns:
-            for tic_id in tic_ids:
-                matches = self.toi_catalog[self.toi_catalog['TIC ID'] == tic_id]
-                
-                if len(matches) > 0:
-                    for _, row in matches.iterrows():
-                        # Extract transit parameters
-                        try:
-                            period = row.get('Period (days)', np.nan)
-                            epoch = row.get('Epoch (BJD)', np.nan)
-                            duration = row.get('Duration (hours)', np.nan)
-                            depth = row.get('Depth (ppm)', np.nan)
-                            
-                            if np.isnan(period) or np.isnan(epoch):
-                                continue
-                            
-                            if tic_id not in transit_params:
-                                transit_params[tic_id] = []
-                            
-                            transit_params[tic_id].append({
-                                'period': period,
-                                'epoch': epoch,
-                                'duration': duration if not np.isnan(duration) else 2.0,  # Default duration
-                                'depth': depth if not np.isnan(depth) else 1000.0,  # Default depth
-                                'source': 'TOI'
-                            })
-                        except Exception as e:
-                            logger.error(f"Error extracting transit parameters for TIC {tic_id}: {str(e)}")
-        
-        # Save transit parameters
-        transit_params_df = []
-        for tic_id, params_list in transit_params.items():
-            for params in params_list:
-                transit_params_df.append({
-                    'tic_id': tic_id,
-                    'period': params['period'],
-                    'epoch': params['epoch'],
-                    'duration': params['duration'],
-                    'depth': params['depth'],
-                    'source': params['source']
-                })
-        
-        transit_params_df = pd.DataFrame(transit_params_df)
-        transit_params_df.to_csv(os.path.join(self.catalog_dir, 'transit_parameters.csv'), index=False)
-        
-        logger.info(f"Found transit parameters for {len(transit_params)} TIC IDs")
-        return transit_params
-    
-    def extract_transit_windows(self, transit_params):
-        """
-        Extract windows around transit events.
+        Load transit parameters from a CSV file.
         
         Parameters:
         -----------
+        filepath : str or None
+            Path to CSV file (if None, use default)
+            
+        Returns:
+        --------
+        pandas.DataFrame
+            DataFrame containing transit parameters
+        """
+        if filepath is None:
+            filepath = os.path.join(self.catalog_dir, "transit_parameters.csv")
+        
+        try:
+            return pd.read_csv(filepath)
+        except Exception as e:
+            logger.error(f"Error loading transit parameters from {filepath}: {str(e)}")
+            return pd.DataFrame(columns=['tic_id', 'planet_name', 'period', 'epoch', 'duration', 'depth', 'source'])
+    
+    def extract_transit_windows(self, time, flux, flux_err, tic_id, sector, transit_params):
+        """
+        Extract transit windows from a light curve.
+        
+        Parameters:
+        -----------
+        time : numpy.ndarray
+            Array of time values
+        flux : numpy.ndarray
+            Array of flux values
+        flux_err : numpy.ndarray
+            Array of flux error values
+        tic_id : int
+            TIC ID
+        sector : int
+            TESS sector number
         transit_params : dict
-            Dictionary mapping TIC IDs to transit parameters
+            Transit parameters
             
         Returns:
         --------
         tuple
-            (transit_windows, non_transit_windows) - Lists of transit and non-transit windows
+            (transit_windows, non_transit_windows)
         """
-        logger.info("Extracting transit windows")
+        # Extract transit parameters
+        period = transit_params['period']
+        epoch = transit_params['epoch']
+        duration = transit_params['duration']  # hours
         
+        # Convert duration from hours to days
+        duration_days = duration / 24.0
+        
+        # Calculate window size in days
+        window_size_days = self.window_size_hours / 24.0
+        
+        # Calculate transit times within the light curve time range
+        transit_times = []
+        t = epoch
+        while t < time[-1]:
+            if t > time[0]:
+                transit_times.append(t)
+            t += period
+        
+        t = epoch - period
+        while t > time[0]:
+            transit_times.append(t)
+            t -= period
+        
+        transit_times = sorted(transit_times)
+        
+        # Extract transit windows
         transit_windows = []
         non_transit_windows = []
         
-        # Process each TIC ID with known transits
-        for tic_id, params_list in tqdm(transit_params.items(), desc="Extracting transit windows"):
-            # Get all processed light curves for this TIC ID
-            lc_files = glob.glob(os.path.join(self.processed_dir, f"TIC_{tic_id}", "*_lc_processed.fits"))
+        # For each transit time
+        for t_mid in transit_times:
+            # Define window boundaries
+            t_start = t_mid - window_size_days / 2
+            t_end = t_mid + window_size_days / 2
             
-            if len(lc_files) == 0:
-                continue
+            # Find indices within window
+            idx = (time >= t_start) & (time <= t_end)
             
-            for lc_file in lc_files:
-                try:
-                    # Load the light curve
-                    lc = lk.read(lc_file)
-                    
-                    # Extract sector from filename
-                    sector = int(os.path.basename(lc_file).split('_')[1])
-                    
-                    # Process each set of transit parameters
-                    for params in params_list:
-                        period = params['period']
-                        epoch = params['epoch']
-                        duration = params['duration']
-                        
-                        # Calculate the window size in days
-                        window_size_days = self.window_size_hours / 24.0
-                        
-                        # Calculate transit times within the light curve time range
-                        time_range = lc.time.value.max() - lc.time.value.min()
-                        num_transits = int(time_range / period) + 1
-                        
-                        transit_times = []
-                        for i in range(-num_transits, num_transits + 1):
-                            transit_time = epoch + i * period
-                            if lc.time.value.min() <= transit_time <= lc.time.value.max():
-                                transit_times.append(transit_time)
-                        
-                        # Extract windows around each transit
-                        for transit_time in transit_times:
-                            # Define window boundaries
-                            window_start = transit_time - window_size_days / 2
-                            window_end = transit_time + window_size_days / 2
-                            
-                            # Extract the window
-                            window_mask = (lc.time.value >= window_start) & (lc.time.value <= window_end)
-                            if np.sum(window_mask) < 10:  # Skip if too few points
-                                continue
-                            
-                            window_time = lc.time.value[window_mask]
-                            window_flux = lc.flux.value[window_mask]
-                            
-                            # Center the time around the transit
-                            window_time = window_time - transit_time
-                            
-                            # Save the transit window
-                            window_data = {
-                                'tic_id': tic_id,
-                                'sector': sector,
-                                'transit_time': transit_time,
-                                'period': period,
-                                'duration': duration,
-                                'time': window_time,
-                                'flux': window_flux,
-                                'label': 1  # 1 for transit
-                            }
-                            
-                            transit_windows.append(window_data)
-                            
-                            # Save the window to a file
-                            window_file = os.path.join(
-                                self.transit_dir,
-                                f"TIC_{tic_id}_sector_{sector}_transit_{len(transit_windows)}.npz"
-                            )
-                            np.savez(
-                                window_file,
-                                tic_id=tic_id,
-                                sector=sector,
-                                transit_time=transit_time,
-                                period=period,
-                                duration=duration,
-                                time=window_time,
-                                flux=window_flux,
-                                label=1
-                            )
-                        
-                        # Extract non-transit windows (3x the number of transit windows)
-                        num_non_transit = 3 * len(transit_times)
-                        
-                        # Define transit masks (regions to avoid)
-                        transit_masks = []
-                        for transit_time in transit_times:
-                            mask_start = transit_time - window_size_days
-                            mask_end = transit_time + window_size_days
-                            transit_masks.append((mask_start, mask_end))
-                        
-                        # Sample random non-transit windows
-                        non_transit_count = 0
-                        max_attempts = 100
-                        attempts = 0
-                        
-                        while non_transit_count < num_non_transit and attempts < max_attempts:
-                            # Random start time within the light curve
-                            random_time = np.random.uniform(
-                                lc.time.value.min() + window_size_days / 2,
-                                lc.time.value.max() - window_size_days / 2
-                            )
-                            
-                            # Check if this time overlaps with any transit
-                            is_transit = False
-                            for mask_start, mask_end in transit_masks:
-                                if mask_start <= random_time <= mask_end:
-                                    is_transit = True
-                                    break
-                            
-                            if is_transit:
-                                attempts += 1
-                                continue
-                            
-                            # Define window boundaries
-                            window_start = random_time - window_size_days / 2
-                            window_end = random_time + window_size_days / 2
-                            
-                            # Extract the window
-                            window_mask = (lc.time.value >= window_start) & (lc.time.value <= window_end)
-                            if np.sum(window_mask) < 10:  # Skip if too few points
-                                attempts += 1
-                                continue
-                            
-                            window_time = lc.time.value[window_mask]
-                            window_flux = lc.flux.value[window_mask]
-                            
-                            # Center the time around the random time
-                            window_time = window_time - random_time
-                            
-                            # Save the non-transit window
-                            window_data = {
-                                'tic_id': tic_id,
-                                'sector': sector,
-                                'transit_time': random_time,  # Not a real transit time
-                                'period': 0.0,  # No period
-                                'duration': 0.0,  # No duration
-                                'time': window_time,
-                                'flux': window_flux,
-                                'label': 0  # 0 for non-transit
-                            }
-                            
-                            non_transit_windows.append(window_data)
-                            
-                            # Save the window to a file
-                            window_file = os.path.join(
-                                self.non_transit_dir,
-                                f"TIC_{tic_id}_sector_{sector}_non_transit_{len(non_transit_windows)}.npz"
-                            )
-                            np.savez(
-                                window_file,
-                                tic_id=tic_id,
-                                sector=sector,
-                                transit_time=random_time,
-                                period=0.0,
-                                duration=0.0,
-                                time=window_time,
-                                flux=window_flux,
-                                label=0
-                            )
-                            
-                            non_transit_count += 1
+            if np.sum(idx) > 10:  # Require at least 10 points
+                # Extract window
+                window_time = time[idx]
+                window_flux = flux[idx]
+                window_flux_err = flux_err[idx]
                 
-                except Exception as e:
-                    logger.error(f"Error extracting windows from {lc_file}: {str(e)}")
+                # Center time around transit
+                window_time = window_time - t_mid
+                
+                # Create window dictionary
+                window = {
+                    'time': window_time,
+                    'flux': window_flux,
+                    'flux_err': window_flux_err,
+                    'tic_id': tic_id,
+                    'sector': sector,
+                    'transit_time': t_mid,
+                    'period': period,
+                    'duration': duration
+                }
+                
+                transit_windows.append(window)
         
-        logger.info(f"Extracted {len(transit_windows)} transit windows and {len(non_transit_windows)} non-transit windows")
-        
-        # Save summary to file
-        with open(os.path.join(self.data_dir, "window_extraction_summary.txt"), "w") as f:
-            f.write(f"Transit windows: {len(transit_windows)}\n")
-            f.write(f"Non-transit windows: {len(non_transit_windows)}\n")
+        # Extract non-transit windows
+        # For simplicity, we'll extract windows midway between transits
+        for i in range(len(transit_times) - 1):
+            t_mid = (transit_times[i] + transit_times[i+1]) / 2
+            
+            # Define window boundaries
+            t_start = t_mid - window_size_days / 2
+            t_end = t_mid + window_size_days / 2
+            
+            # Find indices within window
+            idx = (time >= t_start) & (time <= t_end)
+            
+            if np.sum(idx) > 10:  # Require at least 10 points
+                # Extract window
+                window_time = time[idx]
+                window_flux = flux[idx]
+                window_flux_err = flux_err[idx]
+                
+                # Center time around midpoint
+                window_time = window_time - t_mid
+                
+                # Create window dictionary
+                window = {
+                    'time': window_time,
+                    'flux': window_flux,
+                    'flux_err': window_flux_err,
+                    'tic_id': tic_id,
+                    'sector': sector,
+                    'transit_time': t_mid,
+                    'period': period,
+                    'duration': duration
+                }
+                
+                non_transit_windows.append(window)
         
         return transit_windows, non_transit_windows
     
-    def plot_example_windows(self, num_examples=5):
+    def save_window(self, window, is_transit=True):
         """
-        Plot example transit and non-transit windows.
+        Save a window to a CSV file.
         
         Parameters:
         -----------
-        num_examples : int
-            Number of examples to plot
+        window : dict
+            Window dictionary
+        is_transit : bool
+            Whether this is a transit window
             
         Returns:
         --------
-        None
+        str
+            Path to saved CSV file
         """
-        # Get transit window files
-        transit_files = glob.glob(os.path.join(self.transit_dir, "*.npz"))
-        non_transit_files = glob.glob(os.path.join(self.non_transit_dir, "*.npz"))
+        # Determine output directory
+        if is_transit:
+            output_dir = self.transit_windows_dir
+        else:
+            output_dir = self.non_transit_windows_dir
         
-        if len(transit_files) == 0 or len(non_transit_files) == 0:
-            logger.warning("No window files found")
-            return
+        # Create filename
+        filename = f"TIC_{window['tic_id']}_sector_{window['sector']}_{window['transit_time']:.1f}.csv"
+        filepath = os.path.join(output_dir, filename)
         
-        # Sample random examples
-        transit_samples = np.random.choice(transit_files, min(num_examples, len(transit_files)), replace=False)
-        non_transit_samples = np.random.choice(non_transit_files, min(num_examples, len(non_transit_files)), replace=False)
+        # Create DataFrame
+        df = pd.DataFrame({
+            'time': window['time'],
+            'flux': window['flux'],
+            'flux_err': window['flux_err']
+        })
         
-        # Create output directory
-        plots_dir = os.path.join(self.data_dir, "example_plots")
-        os.makedirs(plots_dir, exist_ok=True)
+        # Save to CSV
+        df.to_csv(filepath, index=False)
         
-        # Plot transit examples
-        plt.figure(figsize=(15, 10))
-        for i, file in enumerate(transit_samples):
-            data = np.load(file)
-            time = data['time']
-            flux = data['flux']
-            tic_id = data['tic_id']
-            sector = data['sector']
-            
-            plt.subplot(2, num_examples, i + 1)
-            plt.plot(time * 24, flux, 'b.')  # Convert time to hours
-            plt.axvline(x=0, color='r', linestyle='--')  # Mark transit center
-            plt.title(f"TIC {tic_id}, Sector {sector}")
-            plt.xlabel("Time from transit (hours)")
-            plt.ylabel("Normalized flux")
-        
-        # Plot non-transit examples
-        for i, file in enumerate(non_transit_samples):
-            data = np.load(file)
-            time = data['time']
-            flux = data['flux']
-            tic_id = data['tic_id']
-            sector = data['sector']
-            
-            plt.subplot(2, num_examples, i + 1 + num_examples)
-            plt.plot(time * 24, flux, 'g.')  # Convert time to hours
-            plt.title(f"TIC {tic_id}, Sector {sector} (Non-transit)")
-            plt.xlabel("Time (hours)")
-            plt.ylabel("Normalized flux")
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, "example_windows.png"))
-        plt.close()
-        
-        logger.info(f"Saved example window plots to {plots_dir}")
+        return filepath
     
     def run_preprocessing_pipeline(self, limit=None):
         """
@@ -593,51 +447,133 @@ class TESSDataPreprocessing:
         
         Parameters:
         -----------
-        limit : int, optional
-            Limit the number of light curves to process (for testing)
+        limit : int or None
+            Maximum number of light curves to process
             
         Returns:
         --------
         dict
-            Dictionary containing summary statistics
+            Dictionary containing pipeline results
         """
         logger.info("Starting preprocessing pipeline")
         
-        # Step 1: Preprocess all light curves
-        preprocessed_files = self.preprocess_all_light_curves(limit=limit)
+        # Find all light curve files (CSV format)
+        lc_files = glob.glob(os.path.join(self.raw_dir, "TIC_*", "sector_*_lc.csv"))
         
-        # Step 2: Cross-match with exoplanet catalogs
-        transit_params = self.cross_match_with_catalogs()
+        if not lc_files:
+            logger.warning("No CSV light curve files found in raw directory")
         
-        # Step 3: Extract transit and non-transit windows
-        transit_windows, non_transit_windows = self.extract_transit_windows(transit_params)
+        if limit is not None:
+            lc_files = lc_files[:limit]
         
-        # Step 4: Plot example windows
-        self.plot_example_windows()
+        logger.info(f"Preprocessing {len(lc_files)} light curves")
         
-        # Generate summary statistics
-        summary = {
-            "num_light_curves_preprocessed": len(preprocessed_files),
-            "num_stars_with_transits": len(transit_params),
-            "num_transit_windows": len(transit_windows),
-            "num_non_transit_windows": len(non_transit_windows)
+        # Process each light curve
+        processed_files = []
+        
+        for lc_file in tqdm(lc_files, desc="Preprocessing light curves"):
+            try:
+                # Preprocess light curve
+                time, flux, flux_err, tic_id, sector = self.preprocess_light_curve(lc_file)
+                
+                # Save processed light curve
+                processed_file = self.save_processed_light_curve(time, flux, flux_err, tic_id, sector)
+                processed_files.append(processed_file)
+            except Exception as e:
+                logger.error(f"Error preprocessing light curve {lc_file}: {str(e)}")
+        
+        logger.info(f"Preprocessed {len(processed_files)} light curves")
+        
+        # Load transit parameters
+        transit_params_df = self.load_transit_parameters()
+        
+        # Cross-match TIC IDs
+        processed_tic_ids = set()
+        for filepath in processed_files:
+            dirname = os.path.dirname(filepath)
+            tic_dirname = os.path.basename(dirname)
+            if "TIC_" in tic_dirname:
+                tic_id = int(tic_dirname.split("_")[1])
+                processed_tic_ids.add(tic_id)
+        
+        logger.info(f"Found {len(processed_tic_ids)} unique TIC IDs in processed data")
+        
+        # Find TIC IDs with transit parameters
+        transit_tic_ids = set(transit_params_df['tic_id'].unique())
+        matched_tic_ids = processed_tic_ids.intersection(transit_tic_ids)
+        
+        logger.info(f"Found transit parameters for {len(matched_tic_ids)} TIC IDs")
+        
+        # Extract transit windows
+        transit_windows = []
+        non_transit_windows = []
+        
+        for tic_id in tqdm(matched_tic_ids, desc="Extracting transit windows"):
+            # Get transit parameters for this TIC ID
+            tic_params = transit_params_df[transit_params_df['tic_id'] == tic_id].iloc[0]
+            transit_params = {
+                'period': tic_params['period'],
+                'epoch': tic_params['epoch'],
+                'duration': tic_params['duration'],
+                'depth': tic_params['depth']
+            }
+            
+            # Find processed light curves for this TIC ID
+            tic_files = glob.glob(os.path.join(self.processed_dir, f"TIC_{tic_id}", "sector_*_lc.csv"))
+            
+            for filepath in tic_files:
+                try:
+                    # Load processed light curve
+                    df = pd.read_csv(filepath)
+                    time = df['time'].values
+                    flux = df['flux'].values
+                    flux_err = df['flux_err'].values
+                    
+                    # Extract sector from filename
+                    filename = os.path.basename(filepath)
+                    sector = int(filename.split("_")[1].split(".")[0])
+                    
+                    # Extract transit windows
+                    tic_transit_windows, tic_non_transit_windows = self.extract_transit_windows(
+                        time, flux, flux_err, tic_id, sector, transit_params
+                    )
+                    
+                    # Save transit windows
+                    for window in tic_transit_windows:
+                        self.save_window(window, is_transit=True)
+                    
+                    # Save non-transit windows
+                    for window in tic_non_transit_windows:
+                        self.save_window(window, is_transit=False)
+                    
+                    transit_windows.extend(tic_transit_windows)
+                    non_transit_windows.extend(tic_non_transit_windows)
+                
+                except Exception as e:
+                    logger.error(f"Error extracting windows from {filepath}: {str(e)}")
+        
+        logger.info(f"Extracted {len(transit_windows)} transit windows and {len(non_transit_windows)} non-transit windows")
+        
+        # Check if any windows were extracted
+        if len(transit_windows) == 0 and len(non_transit_windows) == 0:
+            logger.warning("No window files found")
+        
+        # Compile pipeline results
+        pipeline_results = {
+            'num_light_curves_preprocessed': len(processed_files),
+            'num_stars_with_transits': len(matched_tic_ids),
+            'num_transit_windows': len(transit_windows),
+            'num_non_transit_windows': len(non_transit_windows)
         }
         
-        # Save summary to file
-        with open(os.path.join(self.data_dir, "preprocessing_summary.txt"), "w") as f:
-            for key, value in summary.items():
-                f.write(f"{key}: {value}\n")
-        
         logger.info("Preprocessing pipeline completed")
-        logger.info(f"Summary: {summary}")
+        logger.info(f"Summary: {pipeline_results}")
         
-        return summary
+        return pipeline_results
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Run preprocessing pipeline
     preprocessing = TESSDataPreprocessing()
-    
-    # For testing, limit to a small number of light curves
-    summary = preprocessing.run_preprocessing_pipeline(limit=10)
-    print(summary)
+    results = preprocessing.run_preprocessing_pipeline()
+    print(results)
