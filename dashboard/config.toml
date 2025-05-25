@@ -1,25 +1,19 @@
 # Exo-Detector Dashboard Configuration
-# Author: Manus AI
-# Date: May 2025
 
 [theme]
-# Primary colors
-primaryColor = "#2563EB"  # Blue-600
+primaryColor = "#1E88E5"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F4F6"  # Gray-100
-textColor = "#1F2937"  # Gray-800
+secondaryBackgroundColor = "#F8F9FA"
+textColor = "#333333"
+font = "sans serif"
 
-# Font settings
-font = "sans-serif"
-
-# Layout settings
 [server]
 enableCORS = false
 enableXsrfProtection = true
+maxUploadSize = 200
+maxMessageSize = 200
 
 [browser]
 gatherUsageStats = false
-
-[runner]
-# Memory management
-magicEnabled = true
+serverAddress = "localhost"
+serverPort = 8501

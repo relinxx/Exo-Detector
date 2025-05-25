@@ -1,131 +1,124 @@
 /* 
-Exo-Detector Dashboard Custom Stylesheet
-Author: Manus AI
-Date: May 2025
+Exo-Detector Dashboard Custom Styling
+
+This CSS file provides custom styling for the Exo-Detector dashboard.
+It includes responsive design elements, custom colors, and improved typography.
 */
 
-/* Main layout and typography */
-.main-header {
+/* Dashboard title styling */
+.dashboard-title {
+    padding: 1rem 0;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.2);
+}
+
+.dashboard-title h1 {
     font-size: 2.5rem;
     font-weight: 700;
-    color: #1E3A8A;
+    margin-bottom: 0.5rem;
+    color: #1E88E5;
+}
+
+.subtitle {
+    font-size: 1.2rem;
+    color: #666;
+    font-weight: 300;
+    margin-top: 0;
+}
+
+/* Card styling */
+.stcard {
+    background-color: white;
+    border-radius: 0.5rem;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     margin-bottom: 1rem;
 }
 
-.sub-header {
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #2563EB;
-    margin-top: 1rem;
-    margin-bottom: 0.5rem;
-}
-
-.section-title {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: #1F2937;
-    margin-top: 1.5rem;
-    margin-bottom: 0.75rem;
-}
-
-/* Metric cards */
-.metric-card {
-    background-color: #F3F4F6;
-    border-radius: 0.5rem;
+/* Metric styling */
+.metric-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     padding: 1rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-}
-
-.metric-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
 }
 
 .metric-value {
     font-size: 2rem;
     font-weight: 700;
-    color: #1E3A8A;
+    color: #1E88E5;
 }
 
 .metric-label {
     font-size: 1rem;
-    color: #4B5563;
+    color: #666;
+    margin-top: 0.5rem;
 }
 
-/* Highlight elements */
-.highlight {
-    background-color: #DBEAFE;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-}
-
-.highlight-warning {
-    background-color: #FEF3C7;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-}
-
-.highlight-success {
-    background-color: #D1FAE5;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.25rem;
-}
-
-/* Tables */
+/* Table styling */
 .dataframe {
-    font-size: 0.9rem !important;
+    width: 100%;
+    border-collapse: collapse;
 }
 
 .dataframe th {
-    background-color: #F3F4F6;
+    background-color: #f1f3f4;
+    padding: 0.75rem;
+    text-align: left;
     font-weight: 600;
-    color: #1F2937;
+    border-bottom: 2px solid #ddd;
 }
 
-.dataframe tr:nth-child(even) {
-    background-color: #F9FAFB;
+.dataframe td {
+    padding: 0.75rem;
+    border-bottom: 1px solid #ddd;
 }
 
 .dataframe tr:hover {
-    background-color: #F3F4F6;
+    background-color: #f5f5f5;
 }
 
-/* Charts */
-.js-plotly-plot {
-    border-radius: 0.5rem;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+/* Button styling */
+.stButton > button {
+    background-color: #1E88E5;
+    color: white;
+    border: none;
+    border-radius: 0.25rem;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    transition: background-color 0.3s;
 }
 
-/* Form elements */
-.stRadio > div {
-    padding: 0.5rem;
-    border-radius: 0.5rem;
-    background-color: #F9FAFB;
+.stButton > button:hover {
+    background-color: #1565C0;
 }
 
-.stSlider > div {
-    padding: 1rem 0;
+/* Sidebar styling */
+.css-1d391kg {
+    background-color: #f8f9fa;
 }
 
-/* Footer */
+/* Footer styling */
 .footer {
     margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(49, 51, 63, 0.2);
     text-align: center;
-    color: #6B7280;
-    font-size: 0.875rem;
-    padding: 1rem;
-    border-top: 1px solid #E5E7EB;
+    color: #666;
+    font-size: 0.8rem;
 }
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
-    .main-header {
+    .dashboard-title h1 {
         font-size: 2rem;
     }
     
-    .sub-header {
-        font-size: 1.25rem;
+    .subtitle {
+        font-size: 1rem;
     }
     
     .metric-value {
@@ -133,27 +126,126 @@ Date: May 2025
     }
 }
 
-/* Accessibility improvements */
-a:focus, button:focus, [role="button"]:focus {
-    outline: 2px solid #3B82F6;
-    outline-offset: 2px;
+/* Plot styling */
+.js-plotly-plot {
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+/* Status indicators */
+.status-indicator {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 0.5rem;
 }
 
-::-webkit-scrollbar-track {
-    background: #F3F4F6;
+.status-complete {
+    background-color: #4CAF50;
 }
 
-::-webkit-scrollbar-thumb {
-    background: #D1D5DB;
-    border-radius: 4px;
+.status-partial {
+    background-color: #FF9800;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: #9CA3AF;
+.status-not-run {
+    background-color: #F44336;
+}
+
+/* Vetting status styling */
+.vetting-status {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    display: inline-block;
+}
+
+.vetting-confirmed-planet {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.vetting-likely-planet {
+    background-color: #8BC34A;
+    color: white;
+}
+
+.vetting-uncertain {
+    background-color: #FFC107;
+    color: black;
+}
+
+.vetting-likely-false-positive {
+    background-color: #FF9800;
+    color: white;
+}
+
+.vetting-confirmed-false-positive {
+    background-color: #F44336;
+    color: white;
+}
+
+.vetting-unvetted {
+    background-color: #9E9E9E;
+    color: white;
+}
+
+/* Tooltip styling */
+.tooltip {
+    position: relative;
+    display: inline-block;
+    cursor: help;
+}
+
+.tooltip .tooltiptext {
+    visibility: hidden;
+    width: 200px;
+    background-color: #555;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -100px;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.tooltip:hover .tooltiptext {
+    visibility: visible;
+    opacity: 1;
+}
+
+/* Light curve plot styling */
+.light-curve-container {
+    background-color: white;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1rem;
+}
+
+/* Improve form styling */
+.stForm {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+/* Improve selectbox styling */
+.stSelectbox > div > div {
+    background-color: white;
+    border-radius: 0.25rem;
+}
+
+/* Improve slider styling */
+.stSlider > div > div > div {
+    background-color: #1E88E5;
 }
