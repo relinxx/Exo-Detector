@@ -722,6 +722,29 @@ class AnomalyDetector:
         logger.info(f"Average Precision: {metrics['average_precision']:.4f}")
         
         return pipeline_results
+    
+    def load_autoencoder(self, epoch):
+        """
+        Load a trained autoencoder model from a specified file.
+        
+        Parameters:
+        -----------
+        epoch : int
+            The epoch number of the model to load
+            
+        Returns:
+        --------
+        bool
+            Whether the model was loaded successfully
+        """
+        model_path = os.path.join(self.models_dir, f"autoencoder_epoch_{epoch}.pth")
+        if os.path.exists(model_path):
+            self.autoencoder.load_state_dict(torch.load(model_path, map_location=self.device))
+            logger.info(f"Loaded autoencoder model from {model_path}")
+            return True
+        else:
+            logger.error(f"Autoencoder model file {model_path} does not exist.")
+            return False
 
 
 def run_anomaly_detection(data_dir="data", window_size=200, latent_dim=8, batch_size=128, epochs=50, limit=None):

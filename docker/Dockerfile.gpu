@@ -1,60 +1,63 @@
 # Exo-Detector GPU Dockerfile
-# Author: Manus AI
-# Date: May 2025
+# This Dockerfile creates a container for running the Exo-Detector pipeline
+# with GPU acceleration for training and inference.
 
-# Use NVIDIA CUDA image as base
-FROM nvidia/cuda:11.7.0-cudnn8-runtime-ubuntu20.04
-
-# Set working directory
-WORKDIR /app
+# Use NVIDIA CUDA base image
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    PATH="/home/exouser/.local/bin:$PATH"
+
+# Create non-root user for security
+RUN groupadd -r exouser && useradd -r -g exouser -m -d /home/exouser exouser
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
+    python3-dev \
     build-essential \
     git \
-    wget \
-    python3.9 \
-    python3.9-dev \
-    python3-pip \
-    python3-setuptools \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic links for python
-RUN ln -sf /usr/bin/python3.9 /usr/bin/python && \
-    ln -sf /usr/bin/pip3 /usr/bin/pip
+# Set working directory
+WORKDIR /app
 
-# Create a non-root user
-RUN groupadd -r exouser && useradd -r -g exouser exouser
+# Copy requirements files
+COPY requirements.txt requirements-gpu.txt ./
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-COPY requirements-gpu.txt .
+# Install Python dependencies in a single layer
+RUN pip3 install --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt && \
+    pip3 install --no-cache-dir -r requirements-gpu.txt
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt && \
-    pip install -r requirements-gpu.txt
+# Copy application code
+COPY src/ /app/src/
+COPY dashboard/ /app/dashboard/
 
-# Copy project files
-COPY . .
+# Create necessary directories
+RUN mkdir -p /app/data/raw \
+    /app/data/processed \
+    /app/data/transit_windows \
+    /app/data/non_transit_windows \
+    /app/data/synthetic_transits \
+    /app/data/models \
+    /app/data/candidates \
+    /app/data/validation \
+    /app/data/vetting \
+    /app/data/results
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/data/logs /app/data/candidates /app/data/vetting && \
-    chown -R exouser:exouser /app
+# Set permissions
+RUN chown -R exouser:exouser /app
 
 # Switch to non-root user
 USER exouser
 
-# Set up entry point
-ENTRYPOINT ["python"]
-
-# Default command (can be overridden)
+# Set default command
+ENTRYPOINT ["python3"]
 CMD ["src/run_phase1.py"]
