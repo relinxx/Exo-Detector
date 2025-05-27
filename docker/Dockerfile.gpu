@@ -1,63 +1,27 @@
-# Exo-Detector GPU Dockerfile
-# This Dockerfile creates a container for running the Exo-Detector pipeline
-# with GPU acceleration for training and inference.
+# Use an official PyTorch base image with CUDA 12.1, matching your torch version
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
 
-# Use NVIDIA CUDA base image
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    PATH="/home/exouser/.local/bin:$PATH"
-
-# Create non-root user for security
-RUN groupadd -r exouser && useradd -r -g exouser -m -d /home/exouser exouser
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3-pip \
-    python3-dev \
-    build-essential \
-    git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy requirements files
-COPY requirements.txt requirements-gpu.txt ./
+# Install git, which is useful for some package installations, and clean up
+RUN apt-get update && apt-get install -y git && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies in a single layer
-RUN pip3 install --upgrade pip && \
-    pip3 install --no-cache-dir -r requirements.txt && \
-    pip3 install --no-cache-dir -r requirements-gpu.txt
+# Copy the requirements file first to leverage Docker's layer caching
+COPY requirements.txt .
 
-# Copy application code
-COPY src/ /app/src/
-COPY dashboard/ /app/dashboard/
+# Install all Python dependencies from your requirements file
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p /app/data/raw \
-    /app/data/processed \
-    /app/data/transit_windows \
-    /app/data/non_transit_windows \
-    /app/data/synthetic_transits \
-    /app/data/models \
-    /app/data/candidates \
-    /app/data/validation \
-    /app/data/vetting \
-    /app/data/results
+# Copy your application code and data into the container
+# Assumes 'src' and 'data' directories are in the build context root
+COPY ./src ./src
+COPY ./data ./data
 
-# Set permissions
-RUN chown -R exouser:exouser /app
+# Expose the port Streamlit runs on
+EXPOSE 8501
 
-# Switch to non-root user
-USER exouser
-
-# Set default command
-ENTRYPOINT ["python3"]
-CMD ["src/run_phase1.py"]
+# The command to run when the container starts
+# This launches your Streamlit dashboard and makes it accessible
+CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]

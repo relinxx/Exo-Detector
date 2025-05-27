@@ -1,49 +1,33 @@
-# Exo-Detector CPU Dockerfile
-# Author: Manus AI
-# Date: May 2025
+# Use a slim, official Python base image for a smaller footprint
+FROM python:3.10-slim
 
-# Use Python slim image as base
-FROM python:3.11-slim-buster
-
-# Set working directory
+# Set the working directory inside the container
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+# Install git and clean up
+RUN apt-get update && apt-get install -y git && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    wget \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Install the CPU-only versions of PyTorch, torchvision, and torchaudio
+# This is a critical step for creating a small and efficient CPU image
+RUN pip install torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cpu
 
-# Create a non-root user
-RUN groupadd -r exouser && useradd -r -g exouser exouser
-
-# Copy requirements first to leverage Docker cache
+# Copy the requirements file
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+# Create a new requirements file that excludes the torch packages (since they are already installed)
+# This prevents them from being re-installed with CUDA support
+RUN grep -v '^torch' requirements.txt > requirements.cpu.txt
 
-# Copy project files
-COPY . .
+# Install the remaining dependencies
+RUN pip install --no-cache-dir -r requirements.cpu.txt
 
-# Create necessary directories with proper permissions
-RUN mkdir -p /app/data/logs /app/data/candidates /app/data/vetting && \
-    chown -R exouser:exouser /app
+# Copy your application code and data into the container
+COPY ./src ./src
+COPY ./data ./data
 
-# Switch to non-root user
-USER exouser
+# Expose the port Streamlit runs on
+EXPOSE 8501
 
-# Set up entry point
-ENTRYPOINT ["python"]
-
-# Default command (can be overridden)
-CMD ["src/run_phase1.py"]
+# The command to run when the container starts
+CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
