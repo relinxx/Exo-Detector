@@ -1,0 +1,31 @@
+{
+    "timestamp": "2025-05-31 17:13:57",
+    "limit": null,
+    "steps_executed": {
+        "data_ingestion": true,
+        "preprocessing": true,
+        "validation": true
+    },
+    "ingestion": {
+        "num_stars": 20,
+        "num_light_curves": 43,
+        "num_planets": 10,
+        "sectors": [
+            1,
+            2,
+            3,
+            4,
+            5
+        ],
+        "confirmed_planets_catalog_size": 0,
+        "toi_catalog_size": 0,
+        "num_transit_windows": 162,
+        "num_non_transit_windows": 57
+    },
+    "preprocessing": {
+        "num_light_curves_preprocessed": 63,
+        "num_stars_with_transits": 10,
+        "num_transit_windows": 163,
+        "num_non_transit_windows": 139
+    }
+}
