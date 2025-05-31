@@ -27,16 +27,14 @@ import json
 import time
 import joblib
 from astropy.timeseries import LombScargle
-from astropy.stats import sigma_clip
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+from astropy.stats import sigma_clip# Configure logging
+# logging.basicConfig( # Removed to avoid conflict with run_phase4.py configuration
+#     level=logging.INFO,
+#     format=\'%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
+#     handlers=[
+#         logging.StreamHandler()
+#     ]
+# )
 logger = logging.getLogger(__name__)
 
 # Define the ConvAutoencoder class directly in this module to avoid import issues
@@ -395,6 +393,9 @@ class CandidateRanker:
         tuple
             (is_anomaly, anomaly_score)
         """
+        # Log the raw reconstruction error before scaling
+        logger.debug(f"Raw Reconstruction Error: {error:.6f}")
+        
         # Scale the error
         error_scaled = self.scaler.transform([[error]])
         
@@ -450,9 +451,10 @@ class CandidateRanker:
                 
                 # Compute anomaly score
                 is_anomaly, anomaly_score = self.compute_anomaly_score(error)
+                logger.debug(f"Window index {batch_indices[j]}: Anomaly Score = {anomaly_score:.4f}, Recon Error = {error:.4f}") # Log score for analysis
                 
-                # If anomaly, add to candidates
-                if is_anomaly:
+                # If anomaly score is positive, add to candidates
+                if anomaly_score > 0:
                     # Get window time and index
                     window_time = batch_times[j]
                     window_index = batch_indices[j]
@@ -871,7 +873,7 @@ class CandidateRanker:
         catalog_data = []
         
         for result in results:
-            if result['score'] > 0:
+            if result["score"] > -1:  # Lowered threshold to allow slightly negative scores
                 catalog_data.append({
                     'tic_id': result['tic_id'],
                     'sector': result['sector'],
@@ -886,16 +888,26 @@ class CandidateRanker:
         
         # Create DataFrame
         df = pd.DataFrame(catalog_data)
-        
-        # Sort by score (descending)
-        df = df.sort_values('score', ascending=False)
-        
+
         # Create output file path
         output_file = os.path.join(self.candidates_dir, "candidate_catalog.csv")
-        
-        # Save to CSV
-        df.to_csv(output_file, index=False)
-        
+
+        # Check if DataFrame is empty before sorting and saving
+        if not df.empty:
+            # Sort by score (descending)
+            df = df.sort_values("score", ascending=False)
+            # Save to CSV
+            df.to_csv(output_file, index=False)
+        else:
+            # If empty, save an empty file with headers
+            logger.info("No candidates with score > 0 found. Saving empty catalog.")
+            # Define headers based on the keys used in catalog_data append
+            headers = [
+                "tic_id", "sector", "score", "period", "period_uncertainty",
+                "depth", "duration", "snr", "num_transits"
+            ]
+            pd.DataFrame(columns=headers).to_csv(output_file, index=False)
+
         return output_file
     
     def plot_top_candidates(self, results, num_candidates=10):
@@ -1013,20 +1025,14 @@ class CandidateRanker:
         
         return plot_files
     
-    def run_candidate_ranking_pipeline(self, min_score=2.0, min_distance=10, top_n=100, limit=None):
+    def run_candidate_ranking_pipeline(self, limit=None):
         """
         Run the complete candidate ranking pipeline.
         
         Parameters:
         -----------
-        min_score : float
-            Minimum anomaly score to consider as a candidate
-        min_distance : int
-            Minimum distance between peaks (in number of windows)
-        top_n : int
-            Number of top candidates to return
-        limit : int, optional
-            Limit the number of light curves to scan (for testing)
+        limit : int or None
+            Maximum number of light curves to process
             
         Returns:
         --------

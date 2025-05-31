@@ -9,7 +9,7 @@ log_dir = "../data/logs"
 os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(os.path.join(log_dir, f"phase4_runner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")),
@@ -49,9 +49,6 @@ def run_phase4(min_score=2.0, min_distance=10, top_n=100, limit=None):
     
     ranker = CandidateRanker()
     pipeline_results = ranker.run_candidate_ranking_pipeline(
-        min_score=min_score, 
-        min_distance=min_distance, 
-        top_n=top_n, 
         limit=limit
     )
     
