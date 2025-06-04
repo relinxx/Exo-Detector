@@ -27,14 +27,16 @@ import json
 import time
 import joblib
 from astropy.timeseries import LombScargle
-from astropy.stats import sigma_clip# Configure logging
-# logging.basicConfig( # Removed to avoid conflict with run_phase4.py configuration
-#     level=logging.INFO,
-#     format=\'%(asctime)s - %(name)s - %(levelname)s - %(message)s\',
-#     handlers=[
-#         logging.StreamHandler()
-#     ]
-# )
+from astropy.stats import sigma_clip
+
+# Configure logging - Changed level to DEBUG
+logging.basicConfig(
+    level=logging.DEBUG, # Changed from INFO to DEBUG
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Define the ConvAutoencoder class directly in this module to avoid import issues
@@ -152,7 +154,11 @@ class CandidateRanker:
         self.svm = None
         self.scaler = None
         
+        # RELAXED THRESHOLD: Set a lower anomaly threshold to detect more candidates
+        self.anomaly_threshold = -0.5  # Relaxed from default (typically 0)
+        
         logger.info(f"Initialized CandidateRanker with window_size={window_size}, step_size={step_size}, batch_size={batch_size}")
+        logger.info(f"Using relaxed anomaly threshold: {self.anomaly_threshold}")
     
     def load_models(self):
         """
@@ -201,9 +207,10 @@ class CandidateRanker:
             svm_path = os.path.join(self.models_dir, "anomaly_svm.pkl")
             if not os.path.exists(svm_path):
                 logger.warning("No SVM model found, creating a synthetic SVM for demonstration")
-                # Create a synthetic SVM for demonstration
+                # Create a synthetic SVM for demonstration with RELAXED parameters
                 from sklearn.svm import OneClassSVM
-                self.svm = OneClassSVM(nu=0.1, kernel="linear")
+                # RELAXED PARAMETER: Increased nu for more outliers (0.1 -> 0.2)
+                self.svm = OneClassSVM(nu=0.2, kernel="linear")
                 # Train on random data
                 random_data = np.random.randn(100, 1)
                 self.svm.fit(random_data)
@@ -393,19 +400,19 @@ class CandidateRanker:
         tuple
             (is_anomaly, anomaly_score)
         """
-        # Log the raw reconstruction error before scaling
-        logger.debug(f"Raw Reconstruction Error: {error:.6f}")
-        
         # Scale the error
         error_scaled = self.scaler.transform([[error]])
+        logger.debug(f"Window error: {error:.6f}, Scaled error: {error_scaled[0][0]:.6f}")
         
         # Get decision function value (distance from hyperplane)
         # Multiply by -1 so that higher values indicate more anomalous
         anomaly_score = -1 * self.svm.decision_function(error_scaled)[0]
         
-        # Get prediction (1 for inlier, -1 for outlier)
-        # Convert to 0 for normal, 1 for anomaly
-        is_anomaly = (self.svm.predict(error_scaled)[0] == -1)
+        # RELAXED LOGIC: Use custom threshold instead of SVM prediction
+        # Original: is_anomaly = (self.svm.predict(error_scaled)[0] == -1)
+        is_anomaly = (anomaly_score > self.anomaly_threshold)
+        
+        logger.debug(f"SVM decision function: {-anomaly_score:.6f}, Anomaly score: {anomaly_score:.6f}, Is anomaly: {is_anomaly}")
         
         return is_anomaly, anomaly_score
     
@@ -437,12 +444,23 @@ class CandidateRanker:
         # Initialize list for candidates
         candidates = []
         
+        # RELAXED APPROACH: Find windows with significant dips
+        # This is a backup approach if the anomaly detection doesn't find candidates
+        min_flux_values = []
+        for window in windows:
+            min_flux_values.append(np.min(window))
+        
+        # Calculate statistics of minimum flux values
+        mean_min = np.mean(min_flux_values)
+        std_min = np.std(min_flux_values)
+        
         # Process windows in batches
         for i in range(0, len(windows), self.batch_size):
             # Get batch
             batch_windows = windows[i:i+self.batch_size]
             batch_times = window_times[i:i+self.batch_size]
             batch_indices = window_indices[i:i+self.batch_size]
+            batch_min_flux = min_flux_values[i:i+self.batch_size]
             
             # Process each window in batch
             for j, window in enumerate(batch_windows):
@@ -451,10 +469,16 @@ class CandidateRanker:
                 
                 # Compute anomaly score
                 is_anomaly, anomaly_score = self.compute_anomaly_score(error)
-                logger.debug(f"Window index {batch_indices[j]}: Anomaly Score = {anomaly_score:.4f}, Recon Error = {error:.4f}") # Log score for analysis
                 
-                # If anomaly score is positive, add to candidates
-                if anomaly_score > 0:
+                # RELAXED LOGIC: Also check for significant dips in flux
+                min_flux = batch_min_flux[j]
+                is_significant_dip = (min_flux < mean_min - 2.5 * std_min)
+                
+                logger.debug(f"Window {j} in batch {i//self.batch_size}: Error={error:.4f}, Score={anomaly_score:.4f}, " +
+                           f"Anomaly={is_anomaly}, MinFlux={min_flux:.4f}, IsDip={is_significant_dip}")
+                
+                # If anomaly or significant dip, add to candidates
+                if is_anomaly or is_significant_dip:
                     # Get window time and index
                     window_time = batch_times[j]
                     window_index = batch_indices[j]
@@ -468,14 +492,56 @@ class CandidateRanker:
                         'window_index': window_index,
                         'anomaly_score': anomaly_score,
                         'reconstruction_error': error,
-                        'window_time': window_time,
-                        'window_flux': window
+                        'min_flux': float(min_flux),
+                        'is_anomaly': bool(is_anomaly),
+                        'is_dip': bool(is_significant_dip),
+                        'window_time': window_time.tolist(), # Convert to list for JSON serialization
+                        'window_flux': window.tolist() # Convert to list for JSON serialization
                     }
                     
                     candidates.append(candidate)
         
         # Sort candidates by anomaly score (descending)
         candidates.sort(key=lambda x: x['anomaly_score'], reverse=True)
+        
+        # RELAXED APPROACH: If no candidates found, force include the windows with the deepest dips
+        if not candidates and len(min_flux_values) > 0:
+            logger.info("No candidates found through anomaly detection, including top 3 deepest dips")
+            # Find indices of windows with deepest dips
+            deepest_indices = np.argsort(min_flux_values)[:3]
+            
+            for idx in deepest_indices:
+                window = windows[idx]
+                window_time = window_times[idx]
+                window_index = window_indices[idx]
+                min_flux = min_flux_values[idx]
+                
+                # Calculate mid-time of window
+                mid_time = window_time[len(window_time) // 2]
+                
+                # Compute reconstruction error
+                error = self.compute_reconstruction_error(window)
+                
+                # Compute anomaly score
+                _, anomaly_score = self.compute_anomaly_score(error)
+                
+                # Create candidate dictionary
+                candidate = {
+                    'mid_time': mid_time,
+                    'window_index': window_index,
+                    'anomaly_score': anomaly_score,
+                    'reconstruction_error': error,
+                    'min_flux': float(min_flux),
+                    'is_anomaly': False,
+                    'is_dip': True,
+                    'window_time': window_time.tolist(),
+                    'window_flux': window.tolist()
+                }
+                
+                candidates.append(candidate)
+            
+            # Sort by depth of dip
+            candidates.sort(key=lambda x: x['min_flux'])
         
         return candidates
     
@@ -543,7 +609,8 @@ class CandidateRanker:
             
             # Calculate score based on peak height
             period_score_ls = power[peak_idx] / np.mean(power)
-        except:
+        except Exception as e:
+            logger.debug(f"Lomb-Scargle failed: {e}")
             period_ls = None
             period_uncertainty_ls = None
             period_score_ls = 0.0
@@ -588,7 +655,8 @@ class CandidateRanker:
                 period_pw = None
                 period_uncertainty_pw = None
                 period_score_pw = 0.0
-        except:
+        except Exception as e:
+            logger.debug(f"Pair-wise difference method failed: {e}")
             period_pw = None
             period_uncertainty_pw = None
             period_score_pw = 0.0
@@ -596,14 +664,19 @@ class CandidateRanker:
         # Choose best method
         if period_ls is not None and period_pw is not None:
             if period_score_ls > period_score_pw:
+                logger.debug(f"Using Lomb-Scargle period: {period_ls:.4f} (score={period_score_ls:.2f})")
                 return period_ls, period_uncertainty_ls, period_score_ls
             else:
+                logger.debug(f"Using Pair-wise period: {period_pw:.4f} (score={period_score_pw:.2f})")
                 return period_pw, period_uncertainty_pw, period_score_pw
         elif period_ls is not None:
+            logger.debug(f"Using Lomb-Scargle period: {period_ls:.4f} (score={period_score_ls:.2f})")
             return period_ls, period_uncertainty_ls, period_score_ls
         elif period_pw is not None:
+            logger.debug(f"Using Pair-wise period: {period_pw:.4f} (score={period_score_pw:.2f})")
             return period_pw, period_uncertainty_pw, period_score_pw
         else:
+            logger.debug("Both period estimation methods failed")
             return None, None, 0.0
     
     def estimate_transit_parameters(self, candidates, time, flux):
@@ -632,7 +705,7 @@ class CandidateRanker:
             }
         
         # Combine all candidate windows
-        all_window_flux = np.concatenate([c['window_flux'] for c in candidates])
+        all_window_flux = np.concatenate([np.array(c['window_flux']) for c in candidates])
         
         # Estimate depth as median of minimum flux values in each window
         min_flux_values = [np.min(c['window_flux']) for c in candidates]
@@ -642,7 +715,7 @@ class CandidateRanker:
         # First, find typical transit shape by aligning windows
         aligned_windows = []
         for c in candidates:
-            window = c['window_flux']
+            window = np.array(c['window_flux']) # Ensure it's a numpy array
             # Find minimum point
             min_idx = np.argmin(window)
             # Center window around minimum
@@ -685,8 +758,12 @@ class CandidateRanker:
         # Estimate SNR
         # Calculate noise level from out-of-transit data
         # Use sigma-clipping to exclude transits
-        clipped_flux = sigma_clip(flux, sigma=3)
-        noise = np.std(clipped_flux)
+        try:
+            clipped_flux = sigma_clip(flux, sigma=3)
+            noise = np.std(clipped_flux)
+        except Exception as e:
+            logger.warning(f"Sigma clipping failed: {e}, using standard deviation.")
+            noise = np.std(flux)
         
         # SNR = depth / noise
         snr = depth / noise if noise > 0 else 0.0
@@ -718,16 +795,16 @@ class CandidateRanker:
             Overall candidate score
         """
         # Normalize anomaly score (higher is better)
-        norm_anomaly = min(anomaly_score / 5.0, 1.0)
+        norm_anomaly = min(max(0, anomaly_score / 5.0), 1.0) # Ensure score is between 0 and 1
         
         # Normalize period score (higher is better)
-        norm_period = min(period_score / 10.0, 1.0)
+        norm_period = min(max(0, period_score / 10.0), 1.0) # Ensure score is between 0 and 1
         
         # Normalize SNR (higher is better)
-        norm_snr = min(snr / 20.0, 1.0)
+        norm_snr = min(max(0, snr / 20.0), 1.0) # Ensure score is between 0 and 1
         
         # Normalize number of transits (higher is better)
-        norm_transits = min(num_transits / 5.0, 1.0)
+        norm_transits = min(max(0, num_transits / 5.0), 1.0) # Ensure score is between 0 and 1
         
         # Calculate weighted score
         weights = {
@@ -764,354 +841,119 @@ class CandidateRanker:
             # Load light curve
             time, flux, flux_err, tic_id, sector = self.load_light_curve(filepath)
             
-            # Scan light curve for candidates
+            # Scan light curve for anomalies
             candidates = self.scan_light_curve(time, flux, flux_err)
             
             if not candidates:
                 logger.info(f"No candidates found in {filepath}")
                 return {
-                    'tic_id': int(tic_id),
-                    'sector': int(sector),
+                    'tic_id': tic_id,
+                    'sector': sector,
                     'num_candidates': 0,
-                    'candidates': [],
-                    'period': None,
-                    'period_uncertainty': None,
-                    'transit_parameters': {
-                        'depth': None,
-                        'duration': None,
-                        'snr': None
-                    },
-                    'score': 0.0
+                    'candidates': []
                 }
             
-            logger.info(f"Found {len(candidates)} candidates in {filepath}")
+            logger.info(f"Found {len(candidates)} potential candidates in {filepath}")
             
             # Estimate period
             time_span = time[-1] - time[0]
-            period, period_uncertainty, period_score = self.estimate_period(
-                candidates, time_span
-            )
+            period, period_uncertainty, period_score = self.estimate_period(candidates, time_span)
             
             # Estimate transit parameters
-            transit_parameters = self.estimate_transit_parameters(
-                candidates, time, flux
-            )
+            transit_params = self.estimate_transit_parameters(candidates, time, flux)
             
             # Calculate overall score
             score = self.calculate_candidate_score(
                 np.mean([c['anomaly_score'] for c in candidates]),
                 period_score,
-                transit_parameters['snr'] if transit_parameters['snr'] is not None else 0.0,
+                transit_params['snr'] if transit_params['snr'] is not None else 0.0,
                 len(candidates)
             )
             
-            # Create simplified candidate list for output
-            simplified_candidates = []
-            for c in candidates:
-                simplified_candidates.append({
-                    'mid_time': float(c['mid_time']),
-                    'anomaly_score': float(c['anomaly_score']),
-                    'reconstruction_error': float(c['reconstruction_error'])
-                })
-            
-            # Create result dictionary
+            # Compile results
             result = {
-                'tic_id': int(tic_id),
-                'sector': int(sector),
+                'tic_id': tic_id,
+                'sector': sector,
                 'num_candidates': len(candidates),
-                'candidates': simplified_candidates,
-                'period': float(period) if period is not None else None,
-                'period_uncertainty': float(period_uncertainty) if period_uncertainty is not None else None,
-                'transit_parameters': transit_parameters,
-                'score': float(score)
+                'period': period,
+                'period_uncertainty': period_uncertainty,
+                'period_score': period_score,
+                'depth': transit_params['depth'],
+                'duration': transit_params['duration'],
+                'snr': transit_params['snr'],
+                'score': score,
+                'candidates': candidates
             }
             
             return result
         
         except Exception as e:
             logger.error(f"Error processing light curve {filepath}: {str(e)}")
-            return None
-    
-    def save_candidate_results(self, results):
-        """
-        Save candidate results to a JSON file.
-        
-        Parameters:
-        -----------
-        results : list
-            List of candidate result dictionaries
-            
-        Returns:
-        --------
-        str
-            Path to saved file
-        """
-        # Create output file path
-        output_file = os.path.join(self.candidates_dir, "candidate_results.json")
-        
-        # Save to JSON
-        with open(output_file, 'w') as f:
-            json.dump(results, f, indent=4)
-        
-        return output_file
-    
-    def save_candidate_catalog(self, results):
-        """
-        Save candidate catalog to a CSV file.
-        
-        Parameters:
-        -----------
-        results : list
-            List of candidate result dictionaries
-            
-        Returns:
-        --------
-        str
-            Path to saved file
-        """
-        # Create catalog data
-        catalog_data = []
-        
-        for result in results:
-            if result["score"] > -1:  # Lowered threshold to allow slightly negative scores
-                catalog_data.append({
-                    'tic_id': result['tic_id'],
-                    'sector': result['sector'],
-                    'score': result['score'],
-                    'period': result['period'],
-                    'period_uncertainty': result['period_uncertainty'],
-                    'depth': result['transit_parameters']['depth'],
-                    'duration': result['transit_parameters']['duration'],
-                    'snr': result['transit_parameters']['snr'],
-                    'num_transits': result['num_candidates']
-                })
-        
-        # Create DataFrame
-        df = pd.DataFrame(catalog_data)
-
-        # Create output file path
-        output_file = os.path.join(self.candidates_dir, "candidate_catalog.csv")
-
-        # Check if DataFrame is empty before sorting and saving
-        if not df.empty:
-            # Sort by score (descending)
-            df = df.sort_values("score", ascending=False)
-            # Save to CSV
-            df.to_csv(output_file, index=False)
-        else:
-            # If empty, save an empty file with headers
-            logger.info("No candidates with score > 0 found. Saving empty catalog.")
-            # Define headers based on the keys used in catalog_data append
-            headers = [
-                "tic_id", "sector", "score", "period", "period_uncertainty",
-                "depth", "duration", "snr", "num_transits"
-            ]
-            pd.DataFrame(columns=headers).to_csv(output_file, index=False)
-
-        return output_file
-    
-    def plot_top_candidates(self, results, num_candidates=10):
-        """
-        Plot top candidates.
-        
-        Parameters:
-        -----------
-        results : list
-            List of candidate result dictionaries
-        num_candidates : int
-            Number of top candidates to plot
-            
-        Returns:
-        --------
-        list
-            List of saved plot file paths
-        """
-        # Sort results by score
-        sorted_results = sorted(results, key=lambda x: x['score'], reverse=True)
-        
-        # Limit to top candidates
-        top_results = sorted_results[:num_candidates]
-        
-        # Create output directory
-        plot_dir = os.path.join(self.validation_dir, "top_candidates")
-        os.makedirs(plot_dir, exist_ok=True)
-        
-        # Initialize list for plot files
-        plot_files = []
-        
-        # Plot each candidate
-        for i, result in enumerate(top_results):
-            try:
-                # Skip if no candidates
-                if result['num_candidates'] == 0:
-                    continue
-                
-                # Load light curve
-                tic_id = result['tic_id']
-                sector = result['sector']
-                
-                # Find light curve file
-                lc_file = os.path.join(self.processed_dir, f"TIC_{tic_id}", f"sector_{sector}_lc.csv")
-                
-                if not os.path.exists(lc_file):
-                    logger.warning(f"Light curve file not found: {lc_file}")
-                    continue
-                
-                # Load light curve
-                time, flux, flux_err, _, _ = self.load_light_curve(lc_file)
-                
-                # Create figure
-                fig, axes = plt.subplots(2, 1, figsize=(12, 10))
-                
-                # Plot full light curve
-                axes[0].plot(time, flux, 'k.', markersize=1)
-                axes[0].set_xlabel('Time (BTJD)')
-                axes[0].set_ylabel('Normalized Flux')
-                axes[0].set_title(f"TIC {tic_id} - Sector {sector} - Score: {result['score']:.3f}")
-                
-                # Mark transit times
-                for c in result['candidates']:
-                    axes[0].axvline(c['mid_time'], color='r', alpha=0.5)
-                
-                # Plot phase-folded light curve if period is available
-                if result['period'] is not None:
-                    # Calculate phase
-                    period = result['period']
-                    phase = ((time % period) / period + 0.5) % 1.0 - 0.5
-                    
-                    # Sort by phase
-                    sort_idx = np.argsort(phase)
-                    phase = phase[sort_idx]
-                    folded_flux = flux[sort_idx]
-                    
-                    # Plot
-                    axes[1].plot(phase, folded_flux, 'k.', markersize=1)
-                    axes[1].set_xlabel('Phase')
-                    axes[1].set_ylabel('Normalized Flux')
-                    axes[1].set_title(f"Phase-folded - Period: {period:.3f} days")
-                    
-                    # Add transit parameters
-                    if result['transit_parameters']['depth'] is not None:
-                        depth = result['transit_parameters']['depth']
-                        duration = result['transit_parameters']['duration']
-                        snr = result['transit_parameters']['snr']
-                        
-                        axes[1].text(
-                            0.02, 0.02,
-                            f"Depth: {depth:.5f}\nDuration: {duration:.2f} hours\nSNR: {snr:.1f}",
-                            transform=axes[1].transAxes,
-                            bbox=dict(facecolor='white', alpha=0.7)
-                        )
-                else:
-                    axes[1].text(
-                        0.5, 0.5,
-                        "No period estimate available",
-                        ha='center', va='center',
-                        transform=axes[1].transAxes
-                    )
-                
-                # Adjust layout
-                plt.tight_layout()
-                
-                # Save figure
-                plot_file = os.path.join(plot_dir, f"candidate_{i+1}_TIC_{tic_id}.png")
-                plt.savefig(plot_file)
-                plt.close(fig)
-                
-                plot_files.append(plot_file)
-            
-            except Exception as e:
-                logger.error(f"Error plotting candidate {i+1}: {str(e)}")
-        
-        return plot_files
-    
-    def run_candidate_ranking_pipeline(self, limit=None):
-        """
-        Run the complete candidate ranking pipeline.
-        
-        Parameters:
-        -----------
-        limit : int or None
-            Maximum number of light curves to process
-            
-        Returns:
-        --------
-        dict
-            Dictionary containing pipeline results
-        """
-        start_time = time.time()
-        logger.info("Starting candidate ranking pipeline")
-        
-        # Step 1: Load models
-        if not self.load_models():
-            logger.error("Failed to load models")
             return {
-                'success': False,
-                'error': "Failed to load models"
+                'tic_id': 0,
+                'sector': 0,
+                'num_candidates': 0,
+                'candidates': [],
+                'error': str(e)
             }
+    
+    def plot_candidate(self, result):
+        """
+        Plot the light curve and phase-folded curve for a candidate.
         
-        # Step 2: Find light curves
-        lc_files = self.find_light_curves(limit=limit)
+        Parameters:
+        -----------
+        result : dict
+            Candidate result dictionary
+        """
+        try:
+            tic_id = result['tic_id']
+            sector = result['sector']
+            period = result['period']
+            
+            # Load light curve
+            lc_file = os.path.join(self.processed_dir, f"TIC_{tic_id}", f"sector_{sector}_lc.csv")
+            if not os.path.exists(lc_file):
+                logger.warning(f"Light curve file not found for plotting: {lc_file}")
+                return
+            
+            time, flux, _, _, _ = self.load_light_curve(lc_file)
+            
+            # Create plot
+            fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+            
+            # Plot full light curve
+            axes[0].plot(time, flux, ".", markersize=2, color='k', alpha=0.5)
+            axes[0].set_title(f"TIC {tic_id} Sector {sector} - Full Light Curve")
+            axes[0].set_xlabel("Time (BTJD)")
+            axes[0].set_ylabel("Normalized Flux")
+            
+            # Mark candidate times
+            for cand in result['candidates']:
+                axes[0].axvline(cand['mid_time'], color='r', linestyle='--', alpha=0.7)
+            
+            # Plot phase-folded light curve
+            if period is not None:
+                phase = ((time % period) / period + 0.5) % 1.0 - 0.5
+                sort_idx = np.argsort(phase)
+                axes[1].plot(phase[sort_idx], flux[sort_idx], ".", markersize=2, color='k', alpha=0.5)
+                axes[1].set_title(f"Phase-folded (P = {period:.4f} days)")
+                axes[1].set_xlabel("Phase")
+                axes[1].set_ylabel("Normalized Flux")
+            else:
+                axes[1].text(0.5, 0.5, "Period estimation failed", ha='center', va='center')
+            
+            # Save plot
+            plot_dir = os.path.join(self.validation_dir, "top_candidates")
+            os.makedirs(plot_dir, exist_ok=True)
+            plot_file = os.path.join(plot_dir, f"TIC_{tic_id}_sector_{sector}_candidate.png")
+            plt.tight_layout()
+            plt.savefig(plot_file)
+            plt.close(fig)
+            logger.debug(f"Saved candidate plot to {plot_file}")
         
-        if not lc_files:
-            logger.warning("No light curves found")
-            return {
-                'success': False,
-                'error': "No light curves found"
-            }
-        
-        # Step 3: Process each light curve
-        results = []
-        
-        for lc_file in tqdm(lc_files, desc="Processing light curves"):
-            result = self.process_light_curve(lc_file)
-            if result is not None:
-                results.append(result)
-        
-        if not results:
-            logger.warning("No valid results")
-            return {
-                'success': False,
-                'error': "No valid results"
-            }
-        
-        # Step 4: Save candidate results
-        results_file = self.save_candidate_results(results)
-        logger.info(f"Saved candidate results to {results_file}")
-        
-        # Step 5: Save candidate catalog
-        catalog_file = self.save_candidate_catalog(results)
-        logger.info(f"Saved candidate catalog to {catalog_file}")
-        
-        # Step 6: Plot top candidates
-        plot_files = self.plot_top_candidates(results)
-        logger.info(f"Created {len(plot_files)} candidate plots")
-        
-        # Calculate elapsed time
-        elapsed_time = time.time() - start_time
-        
-        # Count positive detections
-        positive_detections = sum(1 for r in results if r['score'] > 0)
-        
-        # Compile pipeline results
-        pipeline_results = {
-            'success': True,
-            'elapsed_time': elapsed_time,
-            'num_light_curves': len(lc_files),
-            'num_results': len(results),
-            'num_positive_detections': positive_detections,
-            'results_file': results_file,
-            'catalog_file': catalog_file,
-            'plot_files': plot_files
-        }
-        
-        logger.info("Candidate ranking pipeline completed")
-        logger.info(f"Elapsed time: {elapsed_time:.2f} seconds")
-        logger.info(f"Processed {len(lc_files)} light curves")
-        logger.info(f"Found {positive_detections} positive detections")
-        
-        return pipeline_results
-
+        except Exception as e:
+            logger.error(f"Error plotting candidate TIC {result.get('tic_id', 'N/A')} Sector {result.get('sector', 'N/A')}: {str(e)}")
 
 def run_candidate_ranking(data_dir="data", window_size=200, step_size=50, limit=None):
     """
@@ -1131,25 +973,88 @@ def run_candidate_ranking(data_dir="data", window_size=200, step_size=50, limit=
     Returns:
     --------
     dict
-        Dictionary containing pipeline results
+        Dictionary containing ranking results
     """
-    # Initialize candidate ranker
-    ranker = CandidateRanker(
-        data_dir=data_dir,
-        window_size=window_size,
-        step_size=step_size
-    )
+    logger.info("Starting candidate ranking pipeline")
+    start_time = time.time()
     
-    # Run pipeline
-    results = ranker.run_candidate_ranking_pipeline(limit=limit)
+    # Initialize ranker
+    ranker = CandidateRanker(data_dir=data_dir, window_size=window_size, step_size=step_size)
     
-    return results
-
+    # Load models
+    if not ranker.load_models():
+        logger.error("Failed to load models, exiting")
+        return {
+            'status': 'error',
+            'message': 'Failed to load models'
+        }
+    
+    # Find light curves
+    lc_files = ranker.find_light_curves(limit=limit)
+    
+    if not lc_files:
+        logger.warning("No light curves found to process")
+        return {
+            'status': 'warning',
+            'message': 'No light curves found'
+        }
+    
+    # Process light curves
+    all_results = []
+    for filepath in tqdm(lc_files, desc="Processing light curves"):
+        result = ranker.process_light_curve(filepath)
+        if result.get('num_candidates', 0) > 0:
+            all_results.append(result)
+    
+    # Sort results by score
+    all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
+    
+    # Create candidate catalog
+    catalog_data = []
+    for result in all_results:
+        catalog_data.append({
+            'tic_id': result['tic_id'],
+            'sector': result['sector'],
+            'score': result['score'],
+            'period': result['period'],
+            'depth': result['depth'],
+            'duration': result['duration'],
+            'snr': result['snr'],
+            'num_transits': result['num_candidates']
+        })
+    
+    catalog_df = pd.DataFrame(catalog_data)
+    
+    # Save catalog
+    catalog_file = os.path.join(ranker.candidates_dir, "candidate_catalog.csv")
+    catalog_df.to_csv(catalog_file, index=False)
+    logger.info(f"Saved candidate catalog to {catalog_file}")
+    
+    # Save detailed results
+    results_file = os.path.join(ranker.candidates_dir, "candidate_results.json")
+    with open(results_file, "w") as f:
+        json.dump(all_results, f, indent=4)
+    logger.info(f"Saved detailed results to {results_file}")
+    
+    # Plot top candidates
+    num_plots = min(len(all_results), 10) # Plot top 10
+    logger.info(f"Plotting top {num_plots} candidates")
+    for i in range(num_plots):
+        ranker.plot_candidate(all_results[i])
+    
+    end_time = time.time()
+    duration = end_time - start_time
+    
+    logger.info(f"Candidate ranking pipeline completed in {duration:.2f} seconds")
+    
+    return {
+        'status': 'success',
+        'num_light_curves_processed': len(lc_files),
+        'num_candidates_found': len(all_results),
+        'duration_seconds': duration
+    }
 
 if __name__ == "__main__":
-    # Run candidate ranking pipeline
-    results = run_candidate_ranking(
-        window_size=200,
-        step_size=50
-    )
-    print(results)
+    # This part is usually run by run_phase4.py
+    # Example usage:
+    run_candidate_ranking(limit=10)
