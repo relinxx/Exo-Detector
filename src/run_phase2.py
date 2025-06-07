@@ -1,102 +1,111 @@
-#!/usr/bin/env python3
-"""
-Exo-Detector: Phase 2 Runner Script
-
-This script runs the complete Phase 2 pipeline:
-1. GAN-based transit augmentation
-2. Validation of synthetic data
-
-Author: Manus AI
-Date: May 2025
-"""
+# src/run_phase2.py
 
 import os
-import sys
 import logging
 import argparse
 import json
+import numpy as np
 from datetime import datetime
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
+import glob
+
+from advanced_augmentation import AdvancedTransitAugmentation
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def run_phase2(data_dir="data", num_epochs=100, num_synthetic_samples=1000):
-    """
-    Run the complete Phase 2 pipeline.
-    
-    Parameters:
-    -----------
-    data_dir : str
-        Directory containing data
-    num_epochs : int
-        Number of epochs to train the GAN
-    num_synthetic_samples : int
-        Number of synthetic samples to generate
+def load_data_from_windows(window_dir, window_size):
+    """Loads and prepares data from window files for the CVAE-GAN."""
+    all_flux_data = []
+    window_files = glob.glob(os.path.join(window_dir, "*.csv"))
+
+    if not window_files:
+        raise FileNotFoundError(f"No window files found in {window_dir}. Run preprocessing first.")
         
-    Returns:
-    --------
-    dict
-        Dictionary containing summary statistics
-    """
-    logger.info("Starting Phase 2 pipeline")
+    for f in window_files:
+        df = pd.read_csv(f)
+        flux = df['flux'].values
+        if len(flux) < window_size:
+            flux = np.pad(flux, (0, window_size - len(flux)), 'constant', constant_values=1.0)
+        elif len(flux) > window_size:
+            flux = flux[:window_size]
+        all_flux_data.append(flux)
+        
+    flux_tensor = torch.tensor(np.array(all_flux_data), dtype=torch.float32).unsqueeze(1)
+    dummy_conditions = torch.randn(len(flux_tensor), 10)
     
-    # Create absolute path for data directory
+    return TensorDataset(flux_tensor, dummy_conditions)
+
+def run_phase2(data_dir="data", num_epochs=50, num_synthetic_samples=1000, batch_size=32):
+    """Runs the advanced augmentation pipeline using a CVAE-GAN."""
+    logger.info("--- Starting Phase 2: Advanced Data Augmentation ---")
+    
+    window_size = 256
     data_dir = os.path.abspath(data_dir)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info(f"Using device: {device}")
+
+    transit_window_dir = os.path.join(data_dir, "transit_windows")
+    try:
+        train_dataset = load_data_from_windows(transit_window_dir, window_size=window_size)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        logger.info(f"Loaded {len(train_dataset)} transit windows for training.")
+    except FileNotFoundError as e:
+        logger.error(e)
+        return
+
+    augmenter = AdvancedTransitAugmentation(data_dir=data_dir, device=device, window_size=window_size)
     
-    # Import modules
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    logger.info(f"Training CVAE-GAN for {num_epochs} epochs...")
+    for epoch in range(num_epochs):
+        epoch_losses = {'vae_loss': [], 'd_loss': []}
+        for real_data, conditions in train_loader:
+            real_data, conditions = real_data.to(device), conditions.to(device)
+            fake_conditions = torch.randn_like(conditions)
+            
+            losses = augmenter.train_step(real_data, conditions, fake_conditions)
+            epoch_losses['vae_loss'].append(losses['vae_loss'])
+            epoch_losses['d_loss'].append(losses['d_loss'])
+            
+        avg_vae_loss = np.mean(epoch_losses['vae_loss'])
+        avg_d_loss = np.mean(epoch_losses['d_loss'])
+        logger.info(f"Epoch [{epoch+1}/{num_epochs}], VAE Loss: {avg_vae_loss:.4f}, Disc Loss: {avg_d_loss:.4f}")
+
+    logger.info(f"Generating {num_synthetic_samples} synthetic samples...")
+    synthetic_dir = os.path.join(data_dir, "synthetic_transits")
+    os.makedirs(synthetic_dir, exist_ok=True)
     
-    # Step 1: GAN-based transit augmentation
-    logger.info("Running GAN-based transit augmentation")
-    from gan_module import TransitGAN
-    
-    gan = TransitGAN(data_dir=data_dir)
-    pipeline_results = gan.run_gan_pipeline(num_epochs=num_epochs, num_synthetic_samples=num_synthetic_samples)
-    
-    # Compile pipeline results
-    summary = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "num_epochs": num_epochs,
-        "num_synthetic_samples": num_synthetic_samples,
-        "steps_executed": {
-            "gan_training": True,
-            "synthetic_generation": True
-        },
-        "gan_pipeline_results": pipeline_results
-    }
-    
-    # Save results for dashboard compatibility
-    results_dir = os.path.join(data_dir, "results")
-    os.makedirs(results_dir, exist_ok=True)
-    
-    with open(os.path.join(results_dir, "phase2_results.json"), "w") as f:
-        json.dump(summary, f, indent=4)
-    
-    logger.info("Phase 2 pipeline completed")
-    
+    model = augmenter.model.to(device)
+    model.eval()
+    with torch.no_grad():
+        for i in range(num_synthetic_samples):
+            z = torch.randn(1, model.latent_dim).to(device)
+            c = torch.randn(1, model.condition_dim).to(device)
+            synthetic_flux = model.decoder(z, c).squeeze().cpu().numpy()
+            
+            df = pd.DataFrame({'flux': synthetic_flux})
+            df.to_csv(os.path.join(synthetic_dir, f"synthetic_sample_{i}.csv"), index=False)
+            
+    logger.info("Phase 2 pipeline completed successfully.")
+    summary = {'timestamp': datetime.now().isoformat(), 'model_used': 'CVAE-GAN'}
     return summary
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run the Exo-Detector Phase 2 pipeline")
-    parser.add_argument("--data-dir", type=str, default="data", help="Directory containing data")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train the GAN")
+    parser = argparse.ArgumentParser(description="Run Advanced Augmentation (Phase 2)")
+    # *** DEFINITIVE FIX PART 1 ***
+    # This section correctly defines the command-line arguments.
+    parser.add_argument("--data-dir", type=str, default="data", help="Directory for data")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
     parser.add_argument("--samples", type=int, default=1000, help="Number of synthetic samples to generate")
-    
     args = parser.parse_args()
-    
-    # Run the pipeline
-    summary = run_phase2(
-        data_dir=args.data_dir,
-        num_epochs=args.epochs,
+
+    # *** DEFINITIVE FIX PART 2 ***
+    # This section correctly passes your command-line arguments into the main function.
+    run_phase2(
+        data_dir=args.data_dir, 
+        num_epochs=args.epochs, 
         num_synthetic_samples=args.samples
     )
-    
-    print(f"Phase 2 pipeline completed: {summary}")
