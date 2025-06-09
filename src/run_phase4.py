@@ -1,87 +1,82 @@
+#!/usr/bin/env python3
+"""
+Phase 4: Candidate Ranking and Finalization
+This script takes the anomaly scores from Phase 3 and produces a final,
+ranked list of the most promising exoplanet candidates.
+"""
+
 import os
-import sys
-import logging
 import argparse
+import logging
+import json
+import numpy as np
+import pandas as pd
 from datetime import datetime
 
 # Configure logging
-log_dir = "../data/logs"
-os.makedirs(log_dir, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, f"phase4_runner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def run_phase4(min_score=2.0, min_distance=10, top_n=100, limit=None):
+def run_phase4(data_dir="data", top_n=20):
     """
-    Run the complete Phase 4 pipeline.
+    Loads Phase 3 results, ranks candidates by anomaly score, and saves the final list.
+    """
+    logger.info("--- Starting Phase 4: Candidate Ranking ---")
+    data_dir = os.path.abspath(data_dir)
+    results_dir = os.path.join(data_dir, "results")
     
-    Parameters:
-    -----------
-    min_score : float
-        Minimum anomaly score to consider as a candidate
-    min_distance : int
-        Minimum distance between peaks (in number of windows)
-    top_n : int
-        Number of top candidates to return
-    limit : int, optional
-        Limit the number of light curves to scan (for testing)
+    # Define the input file from Phase 3
+    phase3_results_path = os.path.join(results_dir, "phase3_results.json")
+    
+    # 1. Load the results from Phase 3
+    if not os.path.exists(phase3_results_path):
+        logger.error(f"Could not find Phase 3 results at: {phase3_results_path}")
+        logger.error("Please run Phase 3 successfully before running Phase 4.")
+        return None
         
-    Returns:
-    --------
-    dict
-        Dictionary containing summary statistics
-    """
-    logger.info("Starting Phase 4 pipeline")
+    with open(phase3_results_path, 'r') as f:
+        phase3_data = json.load(f)
+        
+    logger.info(f"Loaded {len(phase3_data['anomaly_scores'])} scores from Phase 3.")
     
-    # Import modules
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    # 2. Create a DataFrame of candidates
+    # We assign a unique ID to each window that was tested.
+    candidates_df = pd.DataFrame({
+        'candidate_id': range(len(phase3_data['anomaly_scores'])),
+        'anomaly_score': phase3_data['anomaly_scores'],
+        'is_known_transit': phase3_data['true_labels'] # 1.0 if it was a real/synthetic transit, 0.0 otherwise
+    })
     
-    # Step 1: Candidate scoring and ranking
-    logger.info("Running candidate scoring and ranking")
-    from candidate_ranking import CandidateRanker
+    # 3. Rank the candidates by their anomaly score in descending order
+    ranked_candidates = candidates_df.sort_values(by='anomaly_score', ascending=False)
     
-    ranker = CandidateRanker()
-    pipeline_results = ranker.run_candidate_ranking_pipeline(
-        limit=limit
-    )
+    # Select the top N candidates
+    top_candidates = ranked_candidates.head(top_n)
     
-    logger.info("Phase 4 pipeline completed")
+    logger.info(f"Top 5 Exoplanet Candidates Found:")
+    logger.info("\n" + top_candidates.head(5).to_string())
     
-    # Compile summary
+    # 4. Save the final ranked list
+    final_results_path = os.path.join(results_dir, "final_ranked_candidates.json")
+    top_candidates.to_json(final_results_path, orient='records', indent=2)
+    
     summary = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "min_score": min_score,
-        "min_distance": min_distance,
-        "top_n": top_n,
-        "limit": limit,
-        "candidate_ranking_pipeline_results": pipeline_results
+        "timestamp": datetime.now().isoformat(),
+        "status": "Success",
+        "total_candidates_ranked": len(ranked_candidates),
+        "top_n_saved": top_n,
+        "results_file": final_results_path
     }
+    
+    logger.info("Phase 4 pipeline completed successfully.")
+    logger.info(f"Saved final ranked list to: {final_results_path}")
     
     return summary
 
 if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run the Exo-Detector Phase 4 pipeline")
-    parser.add_argument("--min-score", type=float, default=2.0, help="Minimum anomaly score to consider as a candidate")
-    parser.add_argument("--min-distance", type=int, default=10, help="Minimum distance between peaks (in number of windows)")
-    parser.add_argument("--top-n", type=int, default=100, help="Number of top candidates to return")
-    parser.add_argument("--limit", type=int, default=None, help="Limit the number of light curves to scan (for testing)")
-    
+    parser = argparse.ArgumentParser(description="Run Candidate Ranking (Phase 4)")
+    parser.add_argument('--data-dir', type=str, default='data', help='Directory for data')
+    parser.add_argument('--top-n', type=int, default=20, help='Number of top candidates to save')
     args = parser.parse_args()
-    
-    # Run the pipeline
-    summary = run_phase4(
-        min_score=args.min_score,
-        min_distance=args.min_distance,
-        top_n=args.top_n,
-        limit=args.limit
-    )
-    
-    print(f"Phase 4 pipeline completed: {summary}")
+
+    run_phase4(data_dir=args.data_dir, top_n=args.top_n)
