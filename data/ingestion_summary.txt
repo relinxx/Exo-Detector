@@ -1,5 +1,0 @@
-num_targets_queried: 0
-num_light_curves_downloaded: 0
-sectors_downloaded: [1, 2, 3, 4, 5]
-confirmed_planets_catalog_size: 38449
-toi_catalog_size: 7643

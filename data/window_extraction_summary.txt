@@ -1,2 +1,0 @@
-Transit windows: 0
-Non-transit windows: 0

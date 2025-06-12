@@ -1,4 +1,0 @@
-num_light_curves_preprocessed: 0
-num_stars_with_transits: 0
-num_transit_windows: 0
-num_non_transit_windows: 0
