@@ -1,3 +1,0 @@
-2025-05-19 05:20:35,407 - __main__ - INFO - Starting Phase 1 pipeline
-2025-05-19 05:20:35,407 - __main__ - INFO - Running data ingestion
-2025-05-19 05:20:37,727 - data_ingestion - INFO - Initialized TESSDataIngestion with max_tic_id=100000, sectors=[1, 2, 3, 4, 5]

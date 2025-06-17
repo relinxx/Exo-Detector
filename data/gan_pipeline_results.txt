@@ -1,0 +1,12 @@
+training_stats:
+  num_epochs: 100
+  final_G_loss: 2.410360097885132
+  final_D_loss: 0.7936354875564575
+  final_D_accuracy: 1.0
+synthetic_dataset:
+  num_samples: 1000
+validation_results:
+  mean_transit_depth: 0.04561318829655647
+  std_transit_depth: 0.7312842011451721
+  mean_std_flux: 0.6261594891548157
+  max_std_flux: 0.9891778826713562

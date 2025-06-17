@@ -1,7 +1,0 @@
-2025-05-19 07:41:32,381 - __main__ - INFO - Starting Phase 2 pipeline
-2025-05-19 07:41:32,382 - __main__ - INFO - Running GAN-based transit augmentation
-2025-05-19 07:41:34,103 - gan_module - INFO - Using device: cpu
-2025-05-19 07:41:34,103 - gan_module - INFO - Found 17 transit window files in C:\Users\rehan\Documents\ExoDetector\data\transit_windows
-2025-05-19 07:41:34,103 - gan_module - INFO - TransitDataset initialized with 17 files (list)
-2025-05-19 07:41:34,618 - gan_module - INFO - Starting GAN pipeline
-2025-05-19 07:41:34,618 - gan_module - INFO - Starting GAN training for 100 epochs

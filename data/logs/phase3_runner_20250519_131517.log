@@ -1,5 +1,0 @@
-2025-05-19 13:15:17,795 - __main__ - INFO - Starting Phase 3 pipeline
-2025-05-19 13:15:17,795 - __main__ - INFO - Running anomaly detection
-2025-05-19 13:15:28,395 - anomaly_detection - INFO - Using device: cpu
-2025-05-19 13:15:28,395 - anomaly_detection - INFO - Found 0 window files in ../data\non_transit_windows with label 0
-2025-05-19 13:15:28,395 - anomaly_detection - INFO - Found 0 window files in ../data\transit_windows with label 1

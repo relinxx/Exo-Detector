@@ -1,5 +1,5 @@
 {
-    "timestamp": "2025-05-31 17:35:11",
+    "timestamp": "2025-06-18 11:10:34",
     "num_epochs": 100,
     "num_synthetic_samples": 1000,
     "steps_executed": {
@@ -9,18 +9,18 @@
     "gan_pipeline_results": {
         "training_stats": {
             "num_epochs": 100,
-            "final_G_loss": 2.410360097885132,
-            "final_D_loss": 0.7936354875564575,
+            "final_G_loss": 1.992427110671997,
+            "final_D_loss": 0.721311628818512,
             "final_D_accuracy": 1.0
         },
         "synthetic_dataset": {
             "num_samples": 1000
         },
         "validation_results": {
-            "mean_transit_depth": 0.04561318829655647,
-            "std_transit_depth": 0.7312842011451721,
-            "mean_std_flux": 0.6261594891548157,
-            "max_std_flux": 0.9891778826713562
+            "mean_transit_depth": -0.010007650591433048,
+            "std_transit_depth": 0.7304166555404663,
+            "mean_std_flux": 0.6339288949966431,
+            "max_std_flux": 0.9511678218841553
         }
     }
 }

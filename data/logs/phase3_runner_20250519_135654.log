@@ -1,5 +1,0 @@
-2025-05-19 13:56:54,390 - __main__ - INFO - Starting Phase 3 pipeline
-2025-05-19 13:56:54,390 - __main__ - INFO - Running anomaly detection
-2025-05-19 13:56:58,007 - anomaly_detection - INFO - Using device: cpu
-2025-05-19 13:56:58,032 - anomaly_detection - INFO - Found 0 window files in C:\Users\rehan\Documents\ExoDetector\data\non_transit_windows with label 0
-2025-05-19 13:56:58,045 - anomaly_detection - INFO - Found 17 window files in C:\Users\rehan\Documents\ExoDetector\data\transit_windows with label 1

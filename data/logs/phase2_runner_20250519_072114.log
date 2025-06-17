@@ -1,4 +1,0 @@
-2025-05-19 07:21:14,286 - __main__ - INFO - Starting Phase 2 pipeline
-2025-05-19 07:21:14,286 - __main__ - INFO - Running GAN-based transit augmentation
-2025-05-19 07:21:18,211 - gan_module - INFO - Using device: cpu
-2025-05-19 07:21:18,214 - gan_module - INFO - Found 0 transit window files in ../data\transit_windows
