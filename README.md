@@ -15,7 +15,7 @@ This Exo-Detector project offers an automated AI pipeline designed to identify p
 ---
 
 
-![Exo-Detector Dashboard](C:\Users\rehan\Favorites\Exo-Detector\dashboard.png)
+![Exo-Detector Dashboard](\dashboard.png)
 
 
 ## How to Run the Full Pipeline
