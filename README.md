@@ -14,6 +14,10 @@ This Exo-Detector project offers an automated AI pipeline designed to identify p
 
 ---
 
+
+![Exo-Detector Dashboard](C:\Users\rehan\Favorites\Exo-Detector\dashboard.png)
+
+
 ## How to Run the Full Pipeline
 
 All commands should be executed from the main project directory. The phases must be run in order.
